@@ -1,0 +1,10 @@
+# requirements.txt
+numpy
+trimesh[easy]
+pyvista[all]
+tqdm
+pandas
+scipy
+fast_simplification
+joblib
+
