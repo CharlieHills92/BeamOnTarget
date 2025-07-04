@@ -1,4 +1,4 @@
-# Particle-Mesh Power Deposition Simulation
+# Beam On Target simulation code
 
 This is a high-performance Python application for simulating the interaction of particle beams with complex 3D geometries. It calculates the power deposited on the surfaces of mesh objects (from `.stl` files) and is optimized for parallel processing, memory efficiency, and batch-run capabilities.
 
