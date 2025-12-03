@@ -1,6 +1,8 @@
 # requirements.txt
-numpy
-trimesh[easy]
+numpy==1.26.4
+trimesh==3.23.5
+pyembree==0.1.12
+embreex==2.17.7.post7
 pyvista[all]
 tqdm
 pandas
