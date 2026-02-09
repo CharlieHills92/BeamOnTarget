@@ -21,6 +21,7 @@ import particles
 import engine
 import output
 import batch_smoother # <-- NEW: Import the batch smoother script
+import generate_report
 
 def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
     """
@@ -107,10 +108,23 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
     if config.RUN_SMOOTHER_AFTER_SIM:
         print("\n--- Auto-running Batch Smoother ---")
         try:
-            batch_smoother.batch_process_directory(output_dir_for_run)
+            batch_smoother.batch_process_directory(
+                output_dir_for_run,
+                radius=config.SMOOTHING_RADIUS,
+                max_cell_area=config.SMOOTHING_MAX_CELL_AREA)
         except Exception as e:
             print(f"An error occurred during automatic batch smoothing: {e}")
         print("--- Batch Smoothing Finished ---")
+
+        # Generate CSV report for the smoothed results
+        smoothed_dir = os.path.join(output_dir_for_run, "SMOOTHED")
+        if os.path.isdir(smoothed_dir):
+            print("\n--- Generating Smoothed Summary Report ---")
+            try:
+                generate_report.generate_summary_csv(smoothed_dir)
+            except Exception as e:
+                print(f"An error occurred during report generation: {e}")
+            print("--- Report Generation Finished ---")
 
 def run_setup_preview(grouped_meshes, view_mode):
     """Shows a 3D plot of the setup based on the view_mode."""

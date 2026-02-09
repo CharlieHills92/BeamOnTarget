@@ -123,3 +123,12 @@ NUM_RAYS_TO_SHOW_IN_PLOT = 0
 # If True, automatically runs the batch smoother script after the simulation is complete.
 # This will create smoothed versions of all saved .vtp/.vtm files.
 RUN_SMOOTHER_AFTER_SIM = True
+
+# Smoothing radius in mesh units (metres).  All cells whose centroid is
+# within this radius contribute to the smoothed power density.
+SMOOTHING_RADIUS = 0.02
+
+# Maximum cell area (m²) for smoothing.  Only cells with area below this
+# threshold AND with deposited power > 0 will be smoothed.  Larger cells
+# keep their original density.  Set to None to smooth all cells with power.
+SMOOTHING_MAX_CELL_AREA = 4e-6

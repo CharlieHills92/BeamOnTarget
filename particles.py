@@ -194,7 +194,7 @@ def load_beamlets_from_file(filename, num_particles_per_beamlet, beamlet_area):
     Each line in the file defines a beamlet with a core and an optional halo.
     """
     try:
-        df = pd.read_csv(filename, comment='#', delim_whitespace=True)
+        df = pd.read_csv(filename, comment='#', sep=r'\s+')
     except FileNotFoundError:
         print(f"Error: Particle source file not found at '{filename}'"); return []
     except Exception as e:
