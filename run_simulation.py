@@ -36,15 +36,21 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
     # --- Flatten the grouped geometry for the engine ---
     original_meshes, object_names, save_details_flags = [], [], []
     is_diagnostic_flags_per_mesh = []
+    save_impact_flags_per_mesh = []
+    max_impact_records_per_mesh = []
     for folder_path, mesh_list in grouped_meshes.items():
         settings = config.GEOMETRY_FOLDERS.get(folder_path, {})
         save_flag = settings.get("save_details", False)
         is_diagnostic = settings.get("is_diagnostic", False)
+        save_impact = settings.get("save_impact_data", False)
+        max_impacts = settings.get("max_impact_records", None)
         for mesh in mesh_list:
             original_meshes.append(mesh)
             object_names.append(mesh.metadata['name'])
             save_details_flags.append(save_flag)
             is_diagnostic_flags_per_mesh.append(is_diagnostic)
+            save_impact_flags_per_mesh.append(save_impact)
+            max_impact_records_per_mesh.append(max_impacts)
             
     face_counts = [len(m.faces) for m in original_meshes]
     scene_mesh = trimesh.util.concatenate(original_meshes)
@@ -76,13 +82,17 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
         deposited_power = engine.run_simulation_multi_hit_parallel(
             scene_mesh, face_offsets, face_counts, particle_sources_list, config.get_deposition_fraction,
             is_diagnostic_face, config.NUM_CPU_CORES)
+        # Impact data not yet supported in multi-hit engine
+        impact_data = [{'total_hits': 0, 'stored_hits': 0, 'records': []} for _ in range(len(face_counts))]
     else:
         # --- THIS IS THE CORRECTED CALL ---
-        # The engine now only returns the final power deposition array.
-        deposited_power = engine.run_simulation_single_hit(
+        # The engine now returns the final power deposition array and impact data.
+        deposited_power, impact_data = engine.run_simulation_single_hit(
             scene_mesh, face_offsets, face_counts, particle_sources_list, config.get_deposition_fraction,
             sources_per_worker=config.SOURCES_PER_WORKER,
-            num_cpu_cores=config.NUM_CPU_CORES)
+            num_cpu_cores=config.NUM_CPU_CORES,
+            save_impact_flags=save_impact_flags_per_mesh,
+            max_impact_records=max_impact_records_per_mesh)
 
     # --- Handle Outputs, saving to the specified subfolder ---
     output_dir_for_run = os.path.join(config.DETAILED_OUTPUT_DIR, output_subfolder)
@@ -97,6 +107,11 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
         summary_filename = f"summary_{output_subfolder}.csv"
         summary_path = os.path.join(output_dir_for_run, summary_filename)
         output.save_summary_to_csv(original_meshes, deposited_power, object_names, summary_path)
+
+    # --- Save per-particle impact data if requested ---
+    if any(save_impact_flags_per_mesh):
+        output.save_impact_data_csv(impact_data, object_names, save_impact_flags_per_mesh, output_dir_for_run)
+
     # Automatic visualization is not supported in this memory-safe workflow
     if config.RUN_VISUALIZATION_AFTER_SIM:
         print("\nWARNING: Automatic visualization is disabled in the memory-safe workflow.")

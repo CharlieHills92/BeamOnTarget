@@ -21,13 +21,19 @@ GEOMETRY_CACHE_DIR = "geometry_cache"
 GEOMETRY_FOLDERS = {
     # Key: The path to the folder containing STL files.
     # Value: A dictionary of settings for that folder.
-    
+    #
+    # New options:
+    #   save_impact_data (bool): If True, store impact details (mass, charge, position, velocity, total kinetic energy) for impinging particles as a CSV.
+    #   max_impact_records (int, optional): Maximum number of impact records to store per geometry. If more particles impinge, only the first N are stored, but the total number of impacts is always recorded.
+    #
     "NEU": {
         "scale": 1,
         "target_length": 1.0,
         "save_details": False,  # <-- NEW: Yes, save detailed reports for this folder
         "show_in_plot": False,
-        "is_diagnostic": False  # <-- This marks them as solid surfaces
+        "is_diagnostic": False,  # <-- This marks them as solid surfaces
+        "save_impact_data": False,  # <-- NEW: Store impact data for this geometry?
+        # "max_impact_records": 10000,  # <-- Optional: Max number of impacts to store
     },
     
     "RID": {
@@ -35,7 +41,9 @@ GEOMETRY_FOLDERS = {
         "target_length": 1.0,
         "save_details": False,  # <-- Yes, save for this one too
         "show_in_plot": False,
-        "is_diagnostic": False  # <-- This marks them as solid surfaces
+        "is_diagnostic": False,  # <-- This marks them as solid surfaces
+        "save_impact_data": False,  # <-- NEW: Store impact data for this geometry?
+        # "max_impact_records": 10000,  # <-- Optional: Max number of impacts to store
     },
 
     "CAL": {
@@ -43,7 +51,9 @@ GEOMETRY_FOLDERS = {
         "target_length": 0.5,
         "save_details": True,  # <-- Yes, save for this one too
         "show_in_plot": False,
-        "is_diagnostic": False  # <-- This marks them as solid surfaces
+        "is_diagnostic": False,  # <-- This marks them as solid surfaces
+        "save_impact_data": True,  # <-- NEW: Store impact data for this geometry?
+        "max_impact_records": 10000,  # <-- Optional: Max number of impacts to store
     },
 
     # # --- NEW: A dedicated folder for diagnostic planes ---
@@ -52,9 +62,10 @@ GEOMETRY_FOLDERS = {
     #     "target_length": 0.02,  # Give them a fine mesh for good resolution
     #     "save_details": True,
     #     "show_in_plot": False,
-    #     "is_diagnostic": True  # <-- This marks them as transparent, pass-through surfaces
+    #     "is_diagnostic": True,  # <-- This marks them as transparent, pass-through surfaces
+    #     "save_impact_data": True,  # <-- Store impact data for diagnostics
+    #     "max_impact_records": 100000,  # <-- Example: store up to 100k impacts
     # }
-    
 }
 
 
@@ -122,7 +133,7 @@ NUM_RAYS_TO_SHOW_IN_PLOT = 0
 # --- NEW: Automatic Post-Processing Control ---
 # If True, automatically runs the batch smoother script after the simulation is complete.
 # This will create smoothed versions of all saved .vtp/.vtm files.
-RUN_SMOOTHER_AFTER_SIM = True
+RUN_SMOOTHER_AFTER_SIM = False
 
 # Smoothing radius in mesh units (metres).  All cells whose centroid is
 # within this radius contribute to the smoothed power density.

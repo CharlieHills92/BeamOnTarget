@@ -312,3 +312,60 @@ def save_detailed_reports(original_meshes, deposited_power, object_names, save_f
                 df['deposited_power_density_W_m2'] = df['deposited_power_density_W_m2'].apply(lambda x: f'{x:.3e}')
                 df.to_csv(full_csv_path, index=False)
     print("Detailed report generation complete.")
+
+
+def save_impact_data_csv(impact_data, object_names, save_impact_flags, output_directory):
+    """
+    Saves per-particle impact data as CSV files for objects flagged with save_impact_data=True.
+
+    Each CSV contains columns: mass_kg, charge_state, pos_x, pos_y, pos_z,
+                                dir_x, dir_y, dir_z, kinetic_energy_eV.
+    A header comment records the total number of impacts and how many were stored.
+
+    Args:
+        impact_data: list of dicts from the engine, one per object.
+        object_names: list of object name strings.
+        save_impact_flags: list of bools, True if impact data should be saved.
+        output_directory: path to the output folder.
+    """
+    if not any(save_impact_flags):
+        return
+
+    os.makedirs(output_directory, exist_ok=True)
+    print(f"\nSaving impact data CSV files to '{output_directory}'...")
+
+    for i, name in enumerate(object_names):
+        if not save_impact_flags[i]:
+            continue
+
+        d = impact_data[i]
+        total_hits = d['total_hits']
+        stored_hits = d['stored_hits']
+        records = d['records']
+
+        sanitized_name = os.path.splitext(name)[0]
+        csv_path = os.path.join(output_directory, f"impact_data_{sanitized_name}.csv")
+
+        columns = ['mass_kg', 'charge_state', 'pos_x', 'pos_y', 'pos_z',
+                    'dir_x', 'dir_y', 'dir_z', 'kinetic_energy_eV']
+
+        with open(csv_path, 'w') as f:
+            f.write(f"# Impact data for: {name}\n")
+            f.write(f"# Total particle impacts: {total_hits}\n")
+            f.write(f"# Stored impact records:  {stored_hits}\n")
+            if total_hits > 0:
+                f.write(f"# Fraction stored: {stored_hits / total_hits:.4f}\n")
+            else:
+                f.write(f"# Fraction stored: N/A (no impacts)\n")
+
+        if records:
+            df = pd.DataFrame(records, columns=columns)
+            df['charge_state'] = df['charge_state'].astype(int)
+            df.to_csv(csv_path, index=False, mode='a')
+        else:
+            # Write header-only CSV so downstream tools see the columns
+            pd.DataFrame(columns=columns).to_csv(csv_path, index=False, mode='a')
+
+        print(f"  - {name}: {stored_hits}/{total_hits} impacts saved to '{csv_path}'")
+
+    print("Impact data export complete.")
