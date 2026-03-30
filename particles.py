@@ -8,7 +8,7 @@ import pandas as pd
 
 class ParticleSource:
     """Base class for all particle sources."""
-    def __init__(self, num_particles, energy_range=(100, 800), mass=0.0, total_current=0.0, charge_state=0):
+    def __init__(self, num_particles, energy_range=(100, 800), mass=0.0, total_current=0.0, charge_state=0, source_index=-1):
         """
         Initializes a particle source.
 
@@ -18,12 +18,14 @@ class ParticleSource:
             mass (float): The mass of a single particle in kg.
             total_current (float): The total electrical current of the beamlet in Amperes.
             charge_state (int): The charge of the particle in elementary charge units (e.g., +1 for a proton).
+            source_index (int): Index identifying this source (e.g. beamlet Index from .bl file). -1 = unset.
         """
         self.num_particles = int(num_particles)
         self.energy_range = energy_range
         self.mass = mass
         self.total_current = total_current
         self.charge_state = charge_state
+        self.source_index = int(source_index)
 
     def generate(self):
         """Generates and returns all particle property arrays. Must be implemented by subclasses."""
@@ -211,6 +213,10 @@ def load_beamlets_from_file(filename, num_particles_per_beamlet, beamlet_area):
         energy_range = (min_energy, max_energy)
         total_current = row['CurrentDensity_A_m2'] * beamlet_area
 
+        # Source index: use the 'Index' column from the .bl file if available,
+        # otherwise fall back to the DataFrame row position (0-based).
+        src_index = int(row['Index']) if 'Index' in row.index else index
+
         # Create the CORE beam
         num_core = int(num_particles_per_beamlet * (1.0 - halo_frac))
         current_core = total_current * (1.0 - halo_frac)
@@ -225,7 +231,8 @@ def load_beamlets_from_file(filename, num_particles_per_beamlet, beamlet_area):
                 num_particles=num_core, center_point=center_point, direction=direction,
                 alpha_x=0.0, beta_x=beta_x, emittance_x_mm_mrad=emit_x_m_rad * 1e6,
                 alpha_y=0.0, beta_y=beta_y, emittance_y_mm_mrad=emit_y_m_rad * 1e6,
-                total_current=current_core, mass=mass, charge_state=charge, energy_range=energy_range))
+                total_current=current_core, mass=mass, charge_state=charge, energy_range=energy_range,
+                source_index=src_index))
 
         # Create the HALO beam
         if halo_frac > 0:
@@ -240,6 +247,7 @@ def load_beamlets_from_file(filename, num_particles_per_beamlet, beamlet_area):
                     num_particles=num_halo, center_point=center_point, direction=direction,
                     alpha_x=0.0, beta_x=beta_hx, emittance_x_mm_mrad=emit_hx_m_rad * 1e6,
                     alpha_y=0.0, beta_y=beta_hy, emittance_y_mm_mrad=emit_hy_m_rad * 1e6,
-                    total_current=current_halo, mass=mass, charge_state=charge, energy_range=energy_range))
+                    total_current=current_halo, mass=mass, charge_state=charge, energy_range=energy_range,
+                    source_index=src_index))
 
     return all_sources

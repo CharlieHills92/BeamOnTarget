@@ -9,4 +9,8 @@ pandas
 scipy
 fast_simplification
 joblib
+open3d
+threadpoolctl
+matplotlib
+Pillow
 

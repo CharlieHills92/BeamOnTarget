@@ -223,12 +223,10 @@ def visualize_scene(original_meshes, deposited_power, object_names, geometry_fol
     plotter.show_bounds(grid='front', location='outer', all_edges=True);
     print("Showing interactive plot..."); plotter.show()
 
-def save_summary_to_csv(original_meshes, deposited_power, object_names, filename, outputdirectory="."):
-    """
-    Saves a summary of total power and peak power density for each object.
-    This version filters invalid data to ensure consistency with analysis scripts.
-    """
-    print(f"\nSaving object power summary to '{filename}'...")
+def save_summary_to_csv(original_meshes, deposited_power, object_names, outfile):
+    """Write per-object summary to a CSV file."""
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    print(f"\nSaving object power summary to '{outfile}'...")
     summary_data = []
     
     for i, mesh in enumerate(original_meshes):
@@ -260,7 +258,6 @@ def save_summary_to_csv(original_meshes, deposited_power, object_names, filename
     df = pd.DataFrame(summary_data)
     df['total_deposited_power_W'] = df['total_deposited_power_W'].apply(lambda x: f'{x:.4e}')
     df['peak_power_density_W_m2'] = df['peak_power_density_W_m2'].apply(lambda x: f'{x:.4e}')
-    outfile = os.path.join(outputdirectory, filename)
     df.to_csv(outfile, index=False)
     print("Summary save complete.")
 # def save_summary_to_csv(original_meshes, deposited_power, object_names, filename):
@@ -318,8 +315,8 @@ def save_impact_data_csv(impact_data, object_names, save_impact_flags, output_di
     """
     Saves per-particle impact data as CSV files for objects flagged with save_impact_data=True.
 
-    Each CSV contains columns: mass_kg, charge_state, pos_x, pos_y, pos_z,
-                                dir_x, dir_y, dir_z, kinetic_energy_eV.
+    Each CSV contains columns: source_index, mass_kg, charge_state, pos_x, pos_y, pos_z,
+                                dir_x, dir_y, dir_z, kinetic_energy_eV, current_A.
     A header comment records the total number of impacts and how many were stored.
 
     Args:
@@ -346,8 +343,8 @@ def save_impact_data_csv(impact_data, object_names, save_impact_flags, output_di
         sanitized_name = os.path.splitext(name)[0]
         csv_path = os.path.join(output_directory, f"impact_data_{sanitized_name}.csv")
 
-        columns = ['mass_kg', 'charge_state', 'pos_x', 'pos_y', 'pos_z',
-                    'dir_x', 'dir_y', 'dir_z', 'kinetic_energy_eV']
+        columns = ['source_index', 'mass_kg', 'charge_state', 'pos_x', 'pos_y', 'pos_z',
+                    'dir_x', 'dir_y', 'dir_z', 'kinetic_energy_eV', 'current_A']
 
         with open(csv_path, 'w') as f:
             f.write(f"# Impact data for: {name}\n")
@@ -360,6 +357,7 @@ def save_impact_data_csv(impact_data, object_names, save_impact_flags, output_di
 
         if records:
             df = pd.DataFrame(records, columns=columns)
+            df['source_index'] = df['source_index'].astype(int)
             df['charge_state'] = df['charge_state'].astype(int)
             df.to_csv(csv_path, index=False, mode='a')
         else:

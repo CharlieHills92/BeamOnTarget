@@ -4,21 +4,21 @@
     "GEOMETRY_CACHE_DIR": "geometry_cache",
     "GEOMETRY_FOLDERS": {
         "NEU": {
-            "scale": 1,
+            "scale": 1.0,
             "target_length": 1.0,
-            "save_details": false,
-            "show_in_plot": false,
+            "save_details": true,
             "is_diagnostic": false,
             "save_impact_data": false,
+            "show_in_plot": false,
             "max_impact_records": null
         },
         "RID": {
-            "scale": 1,
+            "scale": 1.0,
             "target_length": 1.0,
-            "save_details": false,
-            "show_in_plot": false,
+            "save_details": true,
             "is_diagnostic": false,
             "save_impact_data": false,
+            "show_in_plot": false,
             "max_impact_records": null
         },
         "CAL": {
@@ -32,7 +32,7 @@
         }
     },
     "PARTICLE_SOURCE_DIR": "BEAM_CONFIGS",
-    "NUM_PARTICLES_PER_BEAMLET": 10001,
+    "NUM_PARTICLES_PER_BEAMLET": 1001,
     "BEAMLET_RADIUS_M": 0.007,
     "SOURCES_PER_WORKER": null,
     "PARTICLE_BATCH_SIZE": 2500000,

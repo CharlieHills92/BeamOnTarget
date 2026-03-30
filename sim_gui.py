@@ -16,6 +16,8 @@ import subprocess
 import glob
 import threading
 
+import viewer  # built-in Open3D viewer
+
 # ---------------------------------------------------------------------------
 # Resolve paths
 # ---------------------------------------------------------------------------
@@ -157,10 +159,159 @@ class SimGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("BeamOnTarget — Simulation Manager")
-        self.geometry("920x720")
-        self.minsize(800, 600)
+        self.geometry("1000x760")
+        self.minsize(860, 640)
         self.cfg = load_config()
+        self._apply_theme()
         self._build_ui()
+        self._build_statusbar()
+
+    # ------------------------------------------------------------------
+    #  Modern theme & styling
+    # ------------------------------------------------------------------
+    def _apply_theme(self):
+        style = ttk.Style(self)
+        # Use clam as the base — it supports most colour overrides
+        style.theme_use("clam")
+
+        # --- Colour palette ---
+        BG       = "#f0f2f5"   # main background
+        CARD_BG  = "#ffffff"   # card / frame background
+        ACCENT   = "#2563eb"   # blue accent (buttons, active tab)
+        ACCENT2  = "#1d4ed8"   # darker accent (pressed)
+        FG       = "#1e293b"   # primary text
+        FG_DIM   = "#64748b"   # secondary text
+        BORDER   = "#cbd5e1"   # subtle borders
+        SUCCESS  = "#16a34a"
+        DANGER   = "#dc2626"
+
+        self.configure(bg=BG)
+
+        # Notebook (tabs)
+        style.configure("TNotebook", background=BG, borderwidth=0)
+        style.configure("TNotebook.Tab",
+                         background=BG, foreground=FG, padding=[14, 6],
+                         font=("Segoe UI", 10))
+        style.map("TNotebook.Tab",
+                   background=[("selected", CARD_BG)],
+                   foreground=[("selected", ACCENT)],
+                   expand=[("selected", [0, 0, 0, 2])])
+
+        # Frames
+        style.configure("TFrame", background=BG)
+        style.configure("Card.TFrame", background=CARD_BG, relief="flat")
+
+        # Labels
+        style.configure("TLabel", background=BG, foreground=FG,
+                         font=("Segoe UI", 10))
+        style.configure("Card.TLabel", background=CARD_BG, foreground=FG,
+                         font=("Segoe UI", 10))
+        style.configure("Header.TLabel", background=BG, foreground=ACCENT,
+                         font=("Segoe UI", 12, "bold"))
+        style.configure("CardHeader.TLabel", background=CARD_BG,
+                         foreground=ACCENT, font=("Segoe UI", 11, "bold"))
+        style.configure("Dim.TLabel", background=BG, foreground=FG_DIM,
+                         font=("Segoe UI", 9))
+        style.configure("Status.TLabel", background=BORDER, foreground=FG,
+                         font=("Segoe UI", 9), padding=[8, 4])
+
+        # Buttons
+        style.configure("TButton", font=("Segoe UI", 10), padding=[10, 5],
+                         background=ACCENT, foreground="white", borderwidth=0)
+        style.map("TButton",
+                   background=[("active", ACCENT2), ("pressed", ACCENT2)],
+                   foreground=[("disabled", FG_DIM)])
+
+        style.configure("Accent.TButton", font=("Segoe UI", 10, "bold"),
+                         padding=[14, 6], background=ACCENT, foreground="white")
+        style.map("Accent.TButton",
+                   background=[("active", ACCENT2)])
+
+        style.configure("Danger.TButton", font=("Segoe UI", 10),
+                         padding=[10, 5], background=DANGER, foreground="white")
+        style.map("Danger.TButton",
+                   background=[("active", "#b91c1c")])
+
+        style.configure("Success.TButton", font=("Segoe UI", 10),
+                         padding=[10, 5], background=SUCCESS, foreground="white")
+        style.map("Success.TButton",
+                   background=[("active", "#15803d")])
+
+        style.configure("Secondary.TButton", font=("Segoe UI", 10),
+                         padding=[10, 5], background="#e2e8f0", foreground=FG,
+                         borderwidth=0)
+        style.map("Secondary.TButton",
+                   background=[("active", "#cbd5e1")])
+
+        # Entries
+        style.configure("TEntry", fieldbackground="white", foreground=FG,
+                         borderwidth=1, padding=[6, 4],
+                         font=("Segoe UI", 10))
+
+        # Spinbox
+        style.configure("TSpinbox", fieldbackground="white", foreground=FG,
+                         padding=[6, 4], font=("Segoe UI", 10))
+
+        # Checkbutton
+        style.configure("TCheckbutton", background=BG, foreground=FG,
+                         font=("Segoe UI", 10))
+        style.configure("Card.TCheckbutton", background=CARD_BG,
+                         foreground=FG, font=("Segoe UI", 10))
+
+        # Treeview
+        style.configure("Treeview", background="white", foreground=FG,
+                         fieldbackground="white", rowheight=26,
+                         font=("Segoe UI", 10), borderwidth=0)
+        style.configure("Treeview.Heading", background=BG, foreground=FG,
+                         font=("Segoe UI", 10, "bold"), padding=[4, 4])
+        style.map("Treeview",
+                   background=[("selected", "#dbeafe")],
+                   foreground=[("selected", ACCENT)])
+
+        # Separator
+        style.configure("TSeparator", background=BORDER)
+
+        # Scrollbar
+        style.configure("Vertical.TScrollbar", background=BG,
+                         troughcolor=CARD_BG, borderwidth=0)
+
+        # Store colours for use in widgets that don't support style
+        self._colours = {
+            "bg": BG, "card": CARD_BG, "accent": ACCENT, "fg": FG,
+            "dim": FG_DIM, "border": BORDER, "success": SUCCESS,
+            "danger": DANGER,
+        }
+
+    # ------------------------------------------------------------------
+    #  Helper: card-like frame with optional title
+    # ------------------------------------------------------------------
+    def _make_card(self, parent, title=None, padx=12, pady=(0, 10)):
+        """Return a content Frame inside a white card with rounded-look padding.
+
+        A wrapper frame is packed into *parent*; inside it an optional title
+        label is packed, then a content frame is packed and returned.  The
+        caller can freely use **either** ``pack`` or ``grid`` inside the
+        returned content frame without conflicting with the title label's
+        geometry manager.
+        """
+        wrapper = ttk.Frame(parent, style="Card.TFrame", padding=14)
+        wrapper.pack(fill="x", padx=padx, pady=pady)
+        if title:
+            ttk.Label(wrapper, text=title, style="CardHeader.TLabel").pack(
+                anchor="w", pady=(0, 8))
+        content = ttk.Frame(wrapper, style="Card.TFrame")
+        content.pack(fill="both", expand=True)
+        return content
+
+    # ------------------------------------------------------------------
+    #  Status bar
+    # ------------------------------------------------------------------
+    def _build_statusbar(self):
+        self._statusbar = ttk.Label(self, text="  Ready", style="Status.TLabel")
+        self._statusbar.pack(side="bottom", fill="x")
+
+    def _set_status(self, text):
+        self._statusbar.config(text=f"  {text}")
 
     # ------------------------------------------------------------------
     #  Build the tabbed interface
@@ -169,7 +320,7 @@ class SimGUI(tk.Tk):
         self._build_menubar()
 
         notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True, padx=6, pady=6)
+        notebook.pack(fill="both", expand=True, padx=8, pady=(8, 0))
 
         self._build_general_tab(notebook)
         self._build_geometry_tab(notebook)
@@ -195,6 +346,20 @@ class SimGUI(tk.Tk):
         menubar.add_cascade(label="File", menu=file_menu)
         self.config(menu=menubar)
 
+        view_menu = tk.Menu(menubar, tearoff=0)
+        view_menu.add_command(label="View All (Open3D)…",
+                              command=self._view_all_o3d)
+        view_menu.add_command(label="View Geometry (Open3D)…",
+                              command=self._view_geometry_o3d)
+        view_menu.add_command(label="View Results (Open3D)…",
+                              command=self._view_results_o3d)
+        view_menu.add_separator()
+        view_menu.add_command(label="View Geometry (ParaView)…",
+                              command=self._view_geometry)
+        view_menu.add_command(label="View Results (ParaView)…",
+                              command=self._view_results)
+        menubar.add_cascade(label="View", menu=view_menu)
+
         self.bind_all("<Control-s>", lambda e: self._save())
         self.bind_all("<Control-Shift-S>", lambda e: self._save_as())
         self.bind_all("<Control-o>", lambda e: self._load_config_file())
@@ -203,41 +368,60 @@ class SimGUI(tk.Tk):
     #  GENERAL tab
     # ------------------------------------------------------------------
     def _build_general_tab(self, nb):
-        frm = ttk.Frame(nb, padding=10)
-        nb.add(frm, text=" General ")
+        outer = ttk.Frame(nb)
+        nb.add(outer, text="  ⚙  General  ")
+
+        # --- Engine card ---
+        card = self._make_card(outer, "Engine Settings", pady=(12, 10))
 
         row = 0
-        ttk.Label(frm, text="CPU cores (-1 = all):").grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Label(card, text="CPU cores (-1 = all):", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=5)
         self.var_cpu = tk.IntVar(value=self.cfg.get("NUM_CPU_CORES", 1))
-        ttk.Spinbox(frm, from_=-1, to=256, textvariable=self.var_cpu, width=8).grid(row=row, column=1, sticky="w")
+        ttk.Spinbox(card, from_=-1, to=256, textvariable=self.var_cpu,
+                     width=8).grid(row=row, column=1, sticky="w", padx=(8, 0))
+
+        row += 1
+        ttk.Label(card, text="Deposition fraction (0–1):", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=5)
+        self.var_dep_frac = tk.DoubleVar(value=self.cfg.get("DEPOSITION_FRACTION", 1.0))
+        ttk.Entry(card, textvariable=self.var_dep_frac, width=10).grid(
+            row=row, column=1, sticky="w", padx=(8, 0))
 
         row += 1
         self.var_diag = tk.BooleanVar(value=self.cfg.get("ENABLE_DIAGNOSTIC_SURFACES", False))
-        ttk.Checkbutton(frm, text="Enable diagnostic (transparent) surfaces", variable=self.var_diag).grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Checkbutton(card, text="Enable diagnostic (transparent) surfaces",
+                         variable=self.var_diag,
+                         style="Card.TCheckbutton").grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=5)
 
         row += 1
-        ttk.Label(frm, text="Geometry cache dir:").grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Label(card, text="Geometry cache dir:", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=5)
         self.var_cache = tk.StringVar(value=self.cfg.get("GEOMETRY_CACHE_DIR", "geometry_cache"))
-        ttk.Entry(frm, textvariable=self.var_cache, width=30).grid(row=row, column=1, sticky="w")
+        ttk.Entry(card, textvariable=self.var_cache, width=30).grid(
+            row=row, column=1, sticky="we", padx=(8, 0))
 
-        row += 1
-        ttk.Label(frm, text="Deposition fraction (0–1):").grid(row=row, column=0, sticky="w", pady=4)
-        self.var_dep_frac = tk.DoubleVar(value=self.cfg.get("DEPOSITION_FRACTION", 1.0))
-        ttk.Entry(frm, textvariable=self.var_dep_frac, width=10).grid(row=row, column=1, sticky="w")
+        card.columnconfigure(1, weight=1)
 
-        row += 1
-        ttk.Label(frm, text="ParaView path:").grid(row=row, column=0, sticky="w", pady=4)
+        # --- ParaView card ---
+        pv_card = self._make_card(outer, "ParaView Integration")
+
+        ttk.Label(pv_card, text="ParaView path:", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", pady=5)
         self.var_pv_path = tk.StringVar(value=self.cfg.get("PARAVIEW_PATH", "paraview"))
-        pv_entry = ttk.Entry(frm, textvariable=self.var_pv_path, width=60)
-        pv_entry.grid(row=row, column=1, sticky="we", padx=(0, 4))
-        ttk.Button(frm, text="Browse…", command=self._browse_pv).grid(row=row, column=2)
+        ttk.Entry(pv_card, textvariable=self.var_pv_path, width=50).grid(
+            row=0, column=1, sticky="we", padx=(8, 4))
+        ttk.Button(pv_card, text="Browse…", style="Secondary.TButton",
+                    command=self._browse_pv).grid(row=0, column=2)
 
-        row += 1
-        ttk.Label(frm, text="ParaView module (ml):").grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Label(pv_card, text="ParaView module (ml):", style="Card.TLabel").grid(
+            row=1, column=0, sticky="w", pady=5)
         self.var_pv_module = tk.StringVar(value=self.cfg.get("PARAVIEW_MODULE", "ParaView"))
-        ttk.Entry(frm, textvariable=self.var_pv_module, width=30).grid(row=row, column=1, sticky="w")
+        ttk.Entry(pv_card, textvariable=self.var_pv_module, width=30).grid(
+            row=1, column=1, sticky="w", padx=(8, 0))
 
-        frm.columnconfigure(1, weight=1)
+        pv_card.columnconfigure(1, weight=1)
 
     def _browse_pv(self):
         p = filedialog.askopenfilename(title="Select ParaView executable",
@@ -249,33 +433,48 @@ class SimGUI(tk.Tk):
     #  GEOMETRY tab (editable table)
     # ------------------------------------------------------------------
     def _build_geometry_tab(self, nb):
-        frm = ttk.Frame(nb, padding=10)
-        nb.add(frm, text=" Geometry ")
+        outer = ttk.Frame(nb)
+        nb.add(outer, text="  📐  Geometry  ")
+
+        card = self._make_card(outer, "Geometry Folders", pady=(12, 10))
 
         # Treeview
         cols = ("folder", "scale", "target_length", "save_details",
                 "is_diagnostic", "save_impact_data", "max_impact_records")
-        self.geo_tree = ttk.Treeview(frm, columns=cols, show="headings", height=8)
+        tree_frame = ttk.Frame(card, style="Card.TFrame")
+        tree_frame.pack(fill="both", expand=True)
+
+        self.geo_tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=8)
         headers = {"folder": "Folder", "scale": "Scale", "target_length": "Target Len",
                    "save_details": "Details", "is_diagnostic": "Diagnostic",
                    "save_impact_data": "Impacts", "max_impact_records": "Max Records"}
-        widths = {"folder": 120, "scale": 60, "target_length": 90, "save_details": 60,
-                  "is_diagnostic": 80, "save_impact_data": 60, "max_impact_records": 100}
+        widths = {"folder": 140, "scale": 60, "target_length": 90, "save_details": 65,
+                  "is_diagnostic": 80, "save_impact_data": 65, "max_impact_records": 100}
         for c in cols:
             self.geo_tree.heading(c, text=headers[c])
             self.geo_tree.column(c, width=widths[c], anchor="center")
         self.geo_tree.column("folder", anchor="w")
-        self.geo_tree.pack(fill="both", expand=True)
+
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.geo_tree.yview)
+        self.geo_tree.configure(yscrollcommand=vsb.set)
+        self.geo_tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
 
         self._populate_geo_tree()
 
         # Buttons
-        btn_frm = ttk.Frame(frm)
-        btn_frm.pack(fill="x", pady=(6, 0))
-        ttk.Button(btn_frm, text="Add Folder…", command=self._add_geo_folder).pack(side="left", padx=2)
-        ttk.Button(btn_frm, text="Edit Selected…", command=self._edit_geo_folder).pack(side="left", padx=2)
-        ttk.Button(btn_frm, text="Remove Selected", command=self._remove_geo_folder).pack(side="left", padx=2)
-        ttk.Button(btn_frm, text="🔍 View Geometry in ParaView", command=self._view_geometry).pack(side="right", padx=2)
+        btn_frm = ttk.Frame(card, style="Card.TFrame")
+        btn_frm.pack(fill="x", pady=(10, 0))
+        ttk.Button(btn_frm, text="＋ Add Folder…", style="Secondary.TButton",
+                    command=self._add_geo_folder).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_frm, text="✎ Edit Selected…", style="Secondary.TButton",
+                    command=self._edit_geo_folder).pack(side="left", padx=4)
+        ttk.Button(btn_frm, text="✕ Remove", style="Secondary.TButton",
+                    command=self._remove_geo_folder).pack(side="left", padx=4)
+        ttk.Button(btn_frm, text="🔍 ParaView", style="Secondary.TButton",
+                    command=self._view_geometry).pack(side="right", padx=(4, 0))
+        ttk.Button(btn_frm, text="� Open3D", style="Secondary.TButton",
+                    command=self._view_geometry_o3d).pack(side="right", padx=4)
 
     def _populate_geo_tree(self):
         for item in self.geo_tree.get_children():
@@ -385,49 +584,87 @@ class SimGUI(tk.Tk):
         pv_mod = self.var_pv_module.get()
         launch_paraview(script, pv, pv_mod)
 
+    def _view_geometry_o3d(self):
+        """Open the built-in Open3D geometry viewer with folder selection."""
+        viewer.view_geometry(self, _SCRIPT_DIR, self.cfg.get("GEOMETRY_FOLDERS", {}))
+
+    def _view_results_o3d(self):
+        """Open the built-in Open3D results viewer with heatmap colouring."""
+        outdir = self.var_outdir.get()
+        viewer.view_results(self, _SCRIPT_DIR, outdir,
+                            geometry_folders=self.cfg.get("GEOMETRY_FOLDERS", {}))
+
+    def _view_all_o3d(self):
+        """Open the built-in Open3D viewer showing geometry + results."""
+        outdir = self.var_outdir.get()
+        viewer.view_all(self, _SCRIPT_DIR, outdir,
+                        self.cfg.get("GEOMETRY_FOLDERS", {}))
+
     # ------------------------------------------------------------------
     #  PARTICLES tab
     # ------------------------------------------------------------------
     def _build_particles_tab(self, nb):
-        frm = ttk.Frame(nb, padding=10)
-        nb.add(frm, text=" Particles ")
+        outer = ttk.Frame(nb)
+        nb.add(outer, text="  🔬  Particles  ")
+
+        # --- Beam source card ---
+        card = self._make_card(outer, "Beam Source", pady=(12, 10))
 
         row = 0
-        ttk.Label(frm, text="Beam config directory:").grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Label(card, text="Beam config directory:", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=5)
         self.var_src_dir = tk.StringVar(value=self.cfg.get("PARTICLE_SOURCE_DIR", "BEAM_CONFIGS"))
-        ttk.Entry(frm, textvariable=self.var_src_dir, width=30).grid(row=row, column=1, sticky="we")
-        ttk.Button(frm, text="Browse…", command=lambda: self._browse_dir(self.var_src_dir)).grid(row=row, column=2, padx=4)
+        ttk.Entry(card, textvariable=self.var_src_dir, width=30).grid(
+            row=row, column=1, sticky="we", padx=(8, 4))
+        ttk.Button(card, text="Browse…", style="Secondary.TButton",
+                    command=lambda: self._browse_dir(self.var_src_dir)).grid(
+            row=row, column=2)
 
         row += 1
-        ttk.Label(frm, text="Particles per beamlet:").grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Label(card, text="Particles per beamlet:", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=5)
         self.var_npb = tk.IntVar(value=self.cfg.get("NUM_PARTICLES_PER_BEAMLET", 10001))
-        ttk.Entry(frm, textvariable=self.var_npb, width=12).grid(row=row, column=1, sticky="w")
+        ttk.Entry(card, textvariable=self.var_npb, width=12).grid(
+            row=row, column=1, sticky="w", padx=(8, 0))
 
         row += 1
-        ttk.Label(frm, text="Beamlet radius (m):").grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Label(card, text="Beamlet radius (m):", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=5)
         self.var_radius = tk.DoubleVar(value=self.cfg.get("BEAMLET_RADIUS_M", 0.007))
-        ttk.Entry(frm, textvariable=self.var_radius, width=12).grid(row=row, column=1, sticky="w")
+        ttk.Entry(card, textvariable=self.var_radius, width=12).grid(
+            row=row, column=1, sticky="w", padx=(8, 0))
 
         row += 1
-        ttk.Label(frm, text="Particle batch size:").grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Label(card, text="Particle batch size:", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=5)
         self.var_batch = tk.IntVar(value=self.cfg.get("PARTICLE_BATCH_SIZE", 2_500_000))
-        ttk.Entry(frm, textvariable=self.var_batch, width=12).grid(row=row, column=1, sticky="w")
+        ttk.Entry(card, textvariable=self.var_batch, width=12).grid(
+            row=row, column=1, sticky="w", padx=(8, 0))
 
         row += 1
-        ttk.Label(frm, text="Sources per worker (empty=auto):").grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Label(card, text="Sources per worker (empty=auto):", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=5)
         spw = self.cfg.get("SOURCES_PER_WORKER")
         self.var_spw = tk.StringVar(value=str(spw) if spw is not None else "")
-        ttk.Entry(frm, textvariable=self.var_spw, width=12).grid(row=row, column=1, sticky="w")
+        ttk.Entry(card, textvariable=self.var_spw, width=12).grid(
+            row=row, column=1, sticky="w", padx=(8, 0))
 
-        # List .bl files found
-        row += 1
-        ttk.Label(frm, text="Beam config files found:").grid(row=row, column=0, sticky="nw", pady=4)
-        self.bl_listbox = tk.Listbox(frm, height=8, width=50)
-        self.bl_listbox.grid(row=row, column=1, columnspan=2, sticky="we", pady=4)
+        card.columnconfigure(1, weight=1)
+
+        # --- Beam files card ---
+        bl_card = self._make_card(outer, "Beam Configuration Files")
+
+        self.bl_listbox = tk.Listbox(bl_card, height=8, width=50,
+                                      font=("Segoe UI", 10),
+                                      bg="white", fg=self._colours["fg"],
+                                      selectbackground=self._colours["accent"],
+                                      selectforeground="white",
+                                      highlightthickness=0, bd=1,
+                                      relief="solid")
+        self.bl_listbox.pack(fill="both", expand=True, pady=(0, 6))
         self._refresh_bl_list()
-        ttk.Button(frm, text="Refresh", command=self._refresh_bl_list).grid(row=row+1, column=1, sticky="w")
-
-        frm.columnconfigure(1, weight=1)
+        ttk.Button(bl_card, text="↻ Refresh", style="Secondary.TButton",
+                    command=self._refresh_bl_list).pack(anchor="w")
 
     def _refresh_bl_list(self):
         self.bl_listbox.delete(0, "end")
@@ -453,47 +690,69 @@ class SimGUI(tk.Tk):
     #  OUTPUT tab
     # ------------------------------------------------------------------
     def _build_output_tab(self, nb):
-        frm = ttk.Frame(nb, padding=10)
-        nb.add(frm, text=" Output ")
+        outer = ttk.Frame(nb)
+        nb.add(outer, text="  📁  Output  ")
 
-        row = 0
-        ttk.Label(frm, text="Output directory:").grid(row=row, column=0, sticky="w", pady=4)
+        # --- Paths card ---
+        card = self._make_card(outer, "Output Settings", pady=(12, 10))
+
+        ttk.Label(card, text="Output directory:", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", pady=5)
         self.var_outdir = tk.StringVar(value=self.cfg.get("DETAILED_OUTPUT_DIR", "OUTPUT"))
-        ttk.Entry(frm, textvariable=self.var_outdir, width=30).grid(row=row, column=1, sticky="we")
-        ttk.Button(frm, text="Browse…", command=lambda: self._browse_dir(self.var_outdir)).grid(row=row, column=2, padx=4)
+        ttk.Entry(card, textvariable=self.var_outdir, width=30).grid(
+            row=0, column=1, sticky="we", padx=(8, 4))
+        ttk.Button(card, text="Browse…", style="Secondary.TButton",
+                    command=lambda: self._browse_dir(self.var_outdir)).grid(
+            row=0, column=2)
+
+        ttk.Label(card, text="Summary CSV filename:", style="Card.TLabel").grid(
+            row=1, column=0, sticky="w", pady=5)
+        self.var_summary = tk.StringVar(value=self.cfg.get("SUMMARY_CSV_FILENAME", "power_summary_by_object.csv"))
+        ttk.Entry(card, textvariable=self.var_summary, width=40).grid(
+            row=1, column=1, sticky="we", padx=(8, 0))
+
+        ttk.Label(card, text="Rays to show in plot:", style="Card.TLabel").grid(
+            row=2, column=0, sticky="w", pady=5)
+        self.var_nrays = tk.IntVar(value=self.cfg.get("NUM_RAYS_TO_SHOW_IN_PLOT", 0))
+        ttk.Entry(card, textvariable=self.var_nrays, width=10).grid(
+            row=2, column=1, sticky="w", padx=(8, 0))
+
+        card.columnconfigure(1, weight=1)
+
+        # --- File options card ---
+        opts_card = self._make_card(outer, "Save Options")
 
         checkboxes = [
             ("SAVE_PARAVIEW_FILES", "Save ParaView (.vtp) files"),
             ("SAVE_BINARY_POWERLOADS", "Save binary (.npy) power loads"),
             ("SAVE_CSV_REPORTS", "Save CSV reports"),
+        ]
+        for key, label in checkboxes:
+            v = tk.BooleanVar(value=self.cfg.get(key, False))
+            ttk.Checkbutton(opts_card, text=label, variable=v,
+                             style="Card.TCheckbutton").pack(anchor="w", pady=2)
+            setattr(self, f"var_{key}", v)
+
+        # --- Visualisation card ---
+        vis_card = self._make_card(outer, "Visualisation")
+
+        vis_checks = [
             ("RUN_VISUALIZATION_AFTER_SIM", "Run visualisation after simulation"),
             ("VISUALIZE_ALL_RAYS", "Visualise all rays (including misses)"),
             ("ENABLE_VISUALIZATION", "Enable visualisation (master switch)"),
         ]
-        for key, label in checkboxes:
-            row += 1
+        for key, label in vis_checks:
             v = tk.BooleanVar(value=self.cfg.get(key, False))
-            ttk.Checkbutton(frm, text=label, variable=v).grid(row=row, column=0, columnspan=3, sticky="w", pady=2)
+            ttk.Checkbutton(vis_card, text=label, variable=v,
+                             style="Card.TCheckbutton").pack(anchor="w", pady=2)
             setattr(self, f"var_{key}", v)
 
-        row += 1
-        ttk.Label(frm, text="Summary CSV filename:").grid(row=row, column=0, sticky="w", pady=4)
-        self.var_summary = tk.StringVar(value=self.cfg.get("SUMMARY_CSV_FILENAME", "power_summary_by_object.csv"))
-        ttk.Entry(frm, textvariable=self.var_summary, width=40).grid(row=row, column=1, sticky="we")
-
-        row += 1
-        ttk.Label(frm, text="Rays to show in plot:").grid(row=row, column=0, sticky="w", pady=4)
-        self.var_nrays = tk.IntVar(value=self.cfg.get("NUM_RAYS_TO_SHOW_IN_PLOT", 0))
-        ttk.Entry(frm, textvariable=self.var_nrays, width=10).grid(row=row, column=1, sticky="w")
-
-        # View results button
-        row += 1
-        ttk.Separator(frm, orient="horizontal").grid(row=row, column=0, columnspan=3, sticky="we", pady=8)
-        row += 1
-        ttk.Button(frm, text="🔍 View Results in ParaView…", command=self._view_results).pack() if False else \
-        ttk.Button(frm, text="🔍 View Results in ParaView…", command=self._view_results).grid(row=row, column=0, columnspan=3, sticky="w", pady=4)
-
-        frm.columnconfigure(1, weight=1)
+        btn_frm = ttk.Frame(vis_card, style="Card.TFrame")
+        btn_frm.pack(fill="x", pady=(8, 0))
+        ttk.Button(btn_frm, text="👁 Results (Open3D)", style="Secondary.TButton",
+                    command=self._view_results_o3d).pack(side="left", padx=(0, 8))
+        ttk.Button(btn_frm, text="🔍 Results (ParaView)", style="Secondary.TButton",
+                    command=self._view_results).pack(side="left")
 
     def _view_results(self):
         outdir = self.var_outdir.get()
@@ -523,44 +782,74 @@ class SimGUI(tk.Tk):
     #  SMOOTHING tab
     # ------------------------------------------------------------------
     def _build_smoothing_tab(self, nb):
-        frm = ttk.Frame(nb, padding=10)
-        nb.add(frm, text=" Smoothing ")
+        outer = ttk.Frame(nb)
+        nb.add(outer, text="  🔄  Smoothing  ")
 
-        row = 0
+        card = self._make_card(outer, "Post-Processing Smoother", pady=(12, 10))
+
         self.var_smoother = tk.BooleanVar(value=self.cfg.get("RUN_SMOOTHER_AFTER_SIM", False))
-        ttk.Checkbutton(frm, text="Run batch smoother after simulation", variable=self.var_smoother).grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Checkbutton(card, text="Run batch smoother after simulation",
+                         variable=self.var_smoother,
+                         style="Card.TCheckbutton").pack(anchor="w", pady=(0, 8))
 
-        row += 1
-        ttk.Label(frm, text="Smoothing radius (m):").grid(row=row, column=0, sticky="w", pady=4)
+        grid = ttk.Frame(card, style="Card.TFrame")
+        grid.pack(fill="x")
+
+        ttk.Label(grid, text="Smoothing radius (m):", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", pady=5)
         self.var_sm_radius = tk.DoubleVar(value=self.cfg.get("SMOOTHING_RADIUS", 0.02))
-        ttk.Entry(frm, textvariable=self.var_sm_radius, width=12).grid(row=row, column=1, sticky="w")
+        ttk.Entry(grid, textvariable=self.var_sm_radius, width=12).grid(
+            row=0, column=1, sticky="w", padx=(8, 0))
 
-        row += 1
-        ttk.Label(frm, text="Max cell area (m², empty=None):").grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Label(grid, text="Max cell area (m², empty=None):", style="Card.TLabel").grid(
+            row=1, column=0, sticky="w", pady=5)
         mca = self.cfg.get("SMOOTHING_MAX_CELL_AREA")
         self.var_sm_mca = tk.StringVar(value=str(mca) if mca is not None else "")
-        ttk.Entry(frm, textvariable=self.var_sm_mca, width=12).grid(row=row, column=1, sticky="w")
+        ttk.Entry(grid, textvariable=self.var_sm_mca, width=12).grid(
+            row=1, column=1, sticky="w", padx=(8, 0))
 
     # ------------------------------------------------------------------
     #  RUN tab (save, run, log)
     # ------------------------------------------------------------------
     def _build_run_tab(self, nb):
-        frm = ttk.Frame(nb, padding=10)
-        nb.add(frm, text=" Run ")
+        outer = ttk.Frame(nb)
+        nb.add(outer, text="  ▶  Run  ")
 
-        btn_frm = ttk.Frame(frm)
-        btn_frm.pack(fill="x")
-        ttk.Button(btn_frm, text="💾 Save Config", command=self._save).pack(side="left", padx=4)
-        ttk.Button(btn_frm, text="💾 Save As…", command=self._save_as).pack(side="left", padx=4)
-        ttk.Button(btn_frm, text="📂 Load Config…", command=self._load_config_file).pack(side="left", padx=4)
-        ttk.Separator(btn_frm, orient="vertical").pack(side="left", fill="y", padx=6)
-        ttk.Button(btn_frm, text="▶ Run Simulation", command=self._run_sim).pack(side="left", padx=4)
-        ttk.Button(btn_frm, text="⏹ Stop", command=self._stop_sim).pack(side="left", padx=4)
+        # --- Action buttons ---
+        btn_card = self._make_card(outer, pady=(12, 6))
+        btn_row = ttk.Frame(btn_card, style="Card.TFrame")
+        btn_row.pack(fill="x")
 
-        ttk.Separator(frm, orient="horizontal").pack(fill="x", pady=6)
+        ttk.Button(btn_row, text="💾 Save Config", style="Secondary.TButton",
+                    command=self._save).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_row, text="💾 Save As…", style="Secondary.TButton",
+                    command=self._save_as).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="📂 Load Config…", style="Secondary.TButton",
+                    command=self._load_config_file).pack(side="left", padx=4)
 
-        self.log_text = scrolledtext.ScrolledText(frm, height=28, state="disabled",
-                                                   font=("Courier", 9), wrap="word")
+        ttk.Separator(btn_row, orient="vertical").pack(side="left", fill="y",
+                                                         padx=12, pady=2)
+
+        ttk.Button(btn_row, text="▶  Run Simulation", style="Accent.TButton",
+                    command=self._run_sim).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="⏹  Stop", style="Danger.TButton",
+                    command=self._stop_sim).pack(side="left", padx=4)
+
+        # SDCC checkbox
+        self.var_sdcc = tk.BooleanVar(value=False)
+        ttk.Checkbutton(btn_card, text="Run on SLURM server (srun --exclusive)",
+                         variable=self.var_sdcc,
+                         style="Card.TCheckbutton").pack(anchor="w", pady=(8, 0))
+
+        # --- Log output ---
+        log_card = self._make_card(outer, "Console Output", pady=(6, 10))
+
+        self.log_text = scrolledtext.ScrolledText(
+            log_card, height=24, state="disabled",
+            font=("Consolas", 10), wrap="word",
+            bg="#1e293b", fg="#e2e8f0", insertbackground="#e2e8f0",
+            selectbackground=self._colours["accent"],
+            highlightthickness=0, bd=0, padx=10, pady=8)
         self.log_text.pack(fill="both", expand=True)
 
         self._sim_process = None
@@ -607,6 +896,7 @@ class SimGUI(tk.Tk):
             self.cfg = self._collect()
             save_config(self.cfg)
             self._log("✔ Configuration saved to config.json\n")
+            self._set_status("Configuration saved")
         except Exception as e:
             messagebox.showerror("Save Error", str(e))
 
@@ -695,23 +985,45 @@ class SimGUI(tk.Tk):
         self.log_text.delete("1.0", "end")
         self.log_text.config(state="disabled")
         self._log("▶ Starting simulation…\n\n")
+        self._set_status("Simulation running…")
 
         def _worker():
             try:
-                self._sim_process = subprocess.Popen(
-                    [_PYTHON, _RUN_SIMULATION],
-                    cwd=_SCRIPT_DIR,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1)
+                if self.var_sdcc.get():
+                    # Wrap in srun: allocate an exclusive compute node,
+                    # run the simulation, then exit the srun shell.
+                    shell_cmd = (
+                        f'srun --exclusive --pty /bin/bash -c '
+                        f'"{_PYTHON} {_RUN_SIMULATION}"'
+                    )
+                    self._sim_process = subprocess.Popen(
+                        ["bash", "-l", "-c", shell_cmd],
+                        cwd=_SCRIPT_DIR,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1)
+                else:
+                    self._sim_process = subprocess.Popen(
+                        [_PYTHON, _RUN_SIMULATION],
+                        cwd=_SCRIPT_DIR,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1)
                 for line in self._sim_process.stdout:
                     self._log(line)
                 self._sim_process.wait()
                 rc = self._sim_process.returncode
-                self._log(f"\n{'✔ Simulation finished.' if rc == 0 else f'✖ Simulation exited with code {rc}.'}\n")
+                if rc == 0:
+                    self._log(f"\n✔ Simulation finished.\n")
+                    self.after(0, lambda: self._set_status("Simulation completed successfully"))
+                else:
+                    self._log(f"\n✖ Simulation exited with code {rc}.\n")
+                    self.after(0, lambda: self._set_status(f"Simulation failed (code {rc})"))
             except Exception as e:
                 self._log(f"\n✖ Error: {e}\n")
+                self.after(0, lambda: self._set_status("Simulation error"))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -719,6 +1031,7 @@ class SimGUI(tk.Tk):
         if self._sim_process and self._sim_process.poll() is None:
             self._sim_process.terminate()
             self._log("\n⏹ Simulation terminated by user.\n")
+            self._set_status("Simulation stopped")
 
     def _log(self, text):
         """Thread-safe append to the log widget."""
@@ -737,13 +1050,23 @@ class _PickDialog(tk.Toplevel):
     def __init__(self, parent, title, items):
         super().__init__(parent)
         self.title(title)
-        self.geometry("340x300")
+        self.geometry("380x340")
         self.transient(parent)
         self.grab_set()
+        self.configure(bg="#f0f2f5")
         self.result = None
 
-        lb = tk.Listbox(self, height=12)
-        lb.pack(fill="both", expand=True, padx=8, pady=8)
+        ttk.Label(self, text="Select a result set:",
+                   font=("Segoe UI", 11, "bold"),
+                   background="#f0f2f5", foreground="#2563eb").pack(
+            anchor="w", padx=12, pady=(12, 6))
+
+        lb = tk.Listbox(self, height=12, font=("Segoe UI", 10),
+                          bg="white", fg="#1e293b",
+                          selectbackground="#2563eb",
+                          selectforeground="white",
+                          highlightthickness=0, bd=1, relief="solid")
+        lb.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         for item in items:
             lb.insert("end", item)
         lb.selection_set(0)
@@ -754,7 +1077,7 @@ class _PickDialog(tk.Toplevel):
                 self.result = lb.get(sel[0])
             self.destroy()
 
-        ttk.Button(self, text="Open in ParaView", command=_ok).pack(pady=(0, 8))
+        ttk.Button(self, text="Open in ParaView", command=_ok).pack(pady=(0, 12))
         lb.bind("<Double-1>", lambda e: _ok())
 
 
