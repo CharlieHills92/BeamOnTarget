@@ -470,7 +470,7 @@ class _EmbeddedViewer:
 
         # Centre of the axis widget (bottom-left with some margin)
         cx, cy = 52, h - 52
-        axis_len = 36  # pixels
+        axis_len = 40  # pixels
 
         # World axes projected to screen via camera rotation R
         # R rows are: right, -up, forward  →  screen x = right, y = up
@@ -483,34 +483,49 @@ class _EmbeddedViewer:
         # Sort by depth (forward component) so farther axes draw first
         projected = []
         for world_dir, color, label in axes:
-            cam = R @ world_dir        # [right, -up, forward]
+            cam = R @ world_dir        # [right, down, forward]
             sx = cam[0] * axis_len     # screen x (right)
-            sy = -cam[1] * axis_len    # screen y (up → PIL down)
+            sy = cam[1] * axis_len     # screen y (down — matches PIL coords)
             depth = cam[2]             # forward (into screen)
             projected.append((depth, sx, sy, color, label))
         projected.sort(key=lambda t: t[0])  # draw far-to-near
 
+        a_size = 7   # arrowhead length in pixels
+        a_half = 3   # arrowhead half-width
+
         for depth, sx, sy, color, label in projected:
-            ex = int(cx + sx)
-            ey = int(cy + sy)
-            # Draw line
-            draw.line([(cx, cy), (ex, ey)], fill=color, width=2)
-            # Arrowhead — small triangle at tip
-            tip_dir = np.array([sx, sy])
-            tip_len = np.linalg.norm(tip_dir)
-            if tip_len > 1e-3:
-                tip_dir /= tip_len
-                perp = np.array([-tip_dir[1], tip_dir[0]])
-                a_size = 5
-                p1 = (ex, ey)
-                p2 = (int(ex - tip_dir[0]*a_size + perp[0]*a_size*0.5),
-                      int(ey - tip_dir[1]*a_size + perp[1]*a_size*0.5))
-                p3 = (int(ex - tip_dir[0]*a_size - perp[0]*a_size*0.5),
-                      int(ey - tip_dir[1]*a_size - perp[1]*a_size*0.5))
-                draw.polygon([p1, p2, p3], fill=color)
-            # Label
-            lx = int(cx + sx * 1.25)
-            ly = int(cy + sy * 1.25)
+            tip_len = math.hypot(sx, sy)
+            if tip_len < 1e-3:
+                continue
+
+            # Unit direction from centre to tip
+            dx = sx / tip_len
+            dy = sy / tip_len
+            # Perpendicular
+            px = -dy
+            py = dx
+
+            # End-point of the shaft (stop short of arrowhead)
+            shaft_ex = cx + sx - dx * a_size
+            shaft_ey = cy + sy - dy * a_size
+            tip_x = cx + sx
+            tip_y = cy + sy
+
+            # Draw shaft line (from centre to base of arrowhead)
+            draw.line([(cx, cy), (shaft_ex, shaft_ey)],
+                      fill=color, width=2)
+
+            # Arrowhead — filled triangle
+            base1 = (shaft_ex + px * a_half,
+                     shaft_ey + py * a_half)
+            base2 = (shaft_ex - px * a_half,
+                     shaft_ey - py * a_half)
+            draw.polygon([(tip_x, tip_y), base1, base2], fill=color)
+
+            # Label — offset outward from the tip
+            lx = cx + sx + dx * 10
+            ly = cy + sy + dy * 10
+            # Centre the text on (lx, ly); approximate glyph size ~6×10 px
             draw.text((lx - 4, ly - 6), label, fill=color)
 
     # ------ mouse interaction ------

@@ -782,7 +782,6 @@ class SimGUI(tk.Tk):
 
         checkboxes = [
             ("SAVE_PARAVIEW_FILES", "Save ParaView (.vtp) files"),
-            ("SAVE_BINARY_POWERLOADS", "Save binary (.npy) power loads"),
             ("SAVE_CSV_REPORTS", "Save CSV reports"),
         ]
         for key, label in checkboxes:
@@ -795,8 +794,6 @@ class SimGUI(tk.Tk):
         vis_card = self._make_card(outer, "Visualisation")
 
         vis_checks = [
-            ("RUN_VISUALIZATION_AFTER_SIM", "Run visualisation after simulation"),
-            ("VISUALIZE_ALL_RAYS", "Visualise all rays (including misses)"),
             ("ENABLE_VISUALIZATION", "Enable visualisation (master switch)"),
         ]
         for key, label in vis_checks:
@@ -943,7 +940,7 @@ class SimGUI(tk.Tk):
         comp_list_frm = ttk.Frame(comp_frm, style="Card.TFrame")
         comp_list_frm.pack(fill="both", expand=True, pady=(2, 0))
         self._chart_comp_vars = {}  # object_name → BooleanVar
-        comp_canvas = tk.Canvas(comp_list_frm, width=120, borderwidth=0,
+        comp_canvas = tk.Canvas(comp_list_frm, width=220, borderwidth=0,
                                 highlightthickness=0, bg="white")
         comp_sb = ttk.Scrollbar(comp_list_frm, orient="vertical",
                                  command=comp_canvas.yview)
@@ -1012,15 +1009,20 @@ class SimGUI(tk.Tk):
             v.set(False)
 
     def _chart_comp_select_all(self):
-        for v in self._chart_comp_vars.values():
-            v.set(True)
+        for d in self._chart_comp_vars.values():
+            d["var"].set(True)
 
     def _chart_comp_select_none(self):
-        for v in self._chart_comp_vars.values():
-            v.set(False)
+        for d in self._chart_comp_vars.values():
+            d["var"].set(False)
 
     def _refresh_chart_comp_list(self):
-        """Rebuild the component checklist from loaded plot data."""
+        """Rebuild the component checklist from loaded plot data.
+
+        Each component gets a checkbox, an editable label (defaults to
+        the STL / object name), and a multiplier entry (defaults to 1.0).
+        Previous values are preserved when the list is rebuilt.
+        """
         # Collect union of all object names in display order
         all_objects = []
         for entries in self._csv_plot_data.values():
@@ -1028,19 +1030,53 @@ class SimGUI(tk.Tk):
                 if e["name"] not in all_objects:
                     all_objects.append(e["name"])
 
-        # Preserve previous selections where possible
-        prev = {k: v.get() for k, v in self._chart_comp_vars.items()}
+        # Preserve previous settings where possible
+        prev = {}
+        for k, d in self._chart_comp_vars.items():
+            prev[k] = {
+                "checked": d["var"].get(),
+                "label": d["label"].get(),
+                "mult": d["mult"].get(),
+            }
 
         for w in self._chart_comp_inner.winfo_children():
             w.destroy()
         self._chart_comp_vars.clear()
 
+        # Header row
+        hdr = ttk.Frame(self._chart_comp_inner, style="Card.TFrame")
+        hdr.pack(fill="x", padx=2, pady=(0, 2))
+        ttk.Label(hdr, text="✓", style="Card.TLabel",
+                  width=2).pack(side="left")
+        ttk.Label(hdr, text="Label", style="Card.TLabel",
+                  width=14).pack(side="left", padx=(2, 0))
+        ttk.Label(hdr, text="Mult", style="Card.TLabel",
+                  width=5).pack(side="left", padx=(2, 0))
+
         for name in all_objects:
-            var = tk.BooleanVar(value=prev.get(name, True))
-            cb = ttk.Checkbutton(self._chart_comp_inner, text=name,
-                                  variable=var, style="Card.TCheckbutton")
-            cb.pack(anchor="w", padx=2, pady=1)
-            self._chart_comp_vars[name] = var
+            p = prev.get(name, {})
+            var = tk.BooleanVar(value=p.get("checked", True))
+            label_var = tk.StringVar(value=p.get("label", name))
+            mult_var = tk.StringVar(value=p.get("mult", "1.0"))
+
+            row_frm = ttk.Frame(self._chart_comp_inner, style="Card.TFrame")
+            row_frm.pack(fill="x", padx=2, pady=1)
+
+            ttk.Checkbutton(row_frm, variable=var,
+                             style="Card.TCheckbutton").pack(
+                                 side="left")
+            lbl_entry = ttk.Entry(row_frm, textvariable=label_var, width=14,
+                                   font=("Segoe UI", 9))
+            lbl_entry.pack(side="left", padx=(2, 0))
+            mult_entry = ttk.Entry(row_frm, textvariable=mult_var, width=5,
+                                    font=("Segoe UI", 9))
+            mult_entry.pack(side="left", padx=(2, 0))
+
+            self._chart_comp_vars[name] = {
+                "var": var,
+                "label": label_var,
+                "mult": mult_var,
+            }
 
     def _load_summary_csv(self):
         """Load summary CSV data for all selected simulations.
@@ -1264,7 +1300,9 @@ class SimGUI(tk.Tk):
         # Apply component filter (if checklist is populated)
         if self._chart_comp_vars:
             all_objects = [o for o in all_objects
-                           if self._chart_comp_vars.get(o, tk.BooleanVar(value=True)).get()]
+                           if self._chart_comp_vars.get(
+                               o, {"var": tk.BooleanVar(value=True)}
+                           )["var"].get()]
 
         n_objects = len(all_objects)
         n_sims = len(sim_names)
@@ -1278,6 +1316,18 @@ class SimGUI(tk.Tk):
         cmap = plt.get_cmap("tab10")
         colours = [cmap(i % 10) for i in range(n_sims)]
 
+        # Build per-object multipliers from the component checklist
+        obj_mult = {}
+        for obj in all_objects:
+            d = self._chart_comp_vars.get(obj)
+            if d:
+                try:
+                    obj_mult[obj] = float(d["mult"].get())
+                except (ValueError, TypeError):
+                    obj_mult[obj] = 1.0
+            else:
+                obj_mult[obj] = 1.0
+
         x = np.arange(n_objects)
         total_bar_width = 0.8
         bar_width = total_bar_width / max(n_sims, 1)
@@ -1288,14 +1338,15 @@ class SimGUI(tk.Tk):
             peaks = []
             powers = []
             for obj in all_objects:
+                m = obj_mult[obj]
                 e = lookup.get(obj)
                 if e:
                     try:
-                        peaks.append(float(e["pd"]))
+                        peaks.append(float(e["pd"]) * m)
                     except (ValueError, TypeError):
                         peaks.append(0.0)
                     try:
-                        powers.append(float(e["tp"]))
+                        powers.append(float(e["tp"]) * m)
                     except (ValueError, TypeError):
                         powers.append(0.0)
                 else:
@@ -1311,6 +1362,15 @@ class SimGUI(tk.Tk):
                          label=label, color=colours[si], edgecolor="white",
                          linewidth=0.5)
 
+        # Build display labels from the component checklist
+        display_labels = []
+        for obj in all_objects:
+            d = self._chart_comp_vars.get(obj)
+            if d:
+                display_labels.append(d["label"].get())
+            else:
+                display_labels.append(obj)
+
         # Formatting
         for ax, title, unit, log_var in [
             (ax_peak, "Peak Heat Load", "W/m²", self.var_chart_log_peak),
@@ -1318,7 +1378,7 @@ class SimGUI(tk.Tk):
         ]:
             ax.set_title(f"{title} [{unit}]", fontsize=10, fontweight="bold")
             ax.set_xticks(x)
-            ax.set_xticklabels(all_objects, rotation=45, ha="right",
+            ax.set_xticklabels(display_labels, rotation=45, ha="right",
                                fontsize=8)
             ax.set_ylabel(unit, fontsize=9)
             if log_var.get():
@@ -1455,10 +1515,7 @@ class SimGUI(tk.Tk):
         d["SOURCES_PER_WORKER"] = int(spw) if spw else None
         d["DETAILED_OUTPUT_DIR"] = self.var_outdir.get()
         d["SAVE_PARAVIEW_FILES"] = self.var_SAVE_PARAVIEW_FILES.get()
-        d["SAVE_BINARY_POWERLOADS"] = self.var_SAVE_BINARY_POWERLOADS.get()
         d["SAVE_CSV_REPORTS"] = self.var_SAVE_CSV_REPORTS.get()
-        d["RUN_VISUALIZATION_AFTER_SIM"] = self.var_RUN_VISUALIZATION_AFTER_SIM.get()
-        d["VISUALIZE_ALL_RAYS"] = self.var_VISUALIZE_ALL_RAYS.get()
         d["ENABLE_VISUALIZATION"] = self.var_ENABLE_VISUALIZATION.get()
         d["SUMMARY_CSV_FILENAME"] = self.var_summary.get()
         d["NUM_RAYS_TO_SHOW_IN_PLOT"] = self.var_nrays.get()
@@ -1537,10 +1594,7 @@ class SimGUI(tk.Tk):
         # Output
         self.var_outdir.set(c.get("DETAILED_OUTPUT_DIR", "OUTPUT"))
         self.var_SAVE_PARAVIEW_FILES.set(c.get("SAVE_PARAVIEW_FILES", True))
-        self.var_SAVE_BINARY_POWERLOADS.set(c.get("SAVE_BINARY_POWERLOADS", False))
         self.var_SAVE_CSV_REPORTS.set(c.get("SAVE_CSV_REPORTS", False))
-        self.var_RUN_VISUALIZATION_AFTER_SIM.set(c.get("RUN_VISUALIZATION_AFTER_SIM", False))
-        self.var_VISUALIZE_ALL_RAYS.set(c.get("VISUALIZE_ALL_RAYS", False))
         self.var_ENABLE_VISUALIZATION.set(c.get("ENABLE_VISUALIZATION", True))
         self.var_summary.set(c.get("SUMMARY_CSV_FILENAME", "power_summary_by_object.csv"))
         self.var_nrays.set(c.get("NUM_RAYS_TO_SHOW_IN_PLOT", 0))
