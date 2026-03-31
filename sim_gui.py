@@ -116,22 +116,37 @@ def _pv_results_script(results_dir):
 
 
 def launch_paraview(script_content, pv_path, pv_module="ParaView"):
-    """Write a temp script and launch ParaView via a shell that loads the
-    required EasyBuild module first (so that LD_LIBRARY_PATH etc. are set)."""
+    """Write a temp script and launch ParaView.
+
+    On Linux the EasyBuild module *pv_module* is loaded first (via
+    ``bash -lc 'ml …'``) so that LD_LIBRARY_PATH etc. are set.
+
+    On Windows ParaView is invoked directly — no module system needed.
+    """
     tmp_script = os.path.join(_SCRIPT_DIR, ".pv_temp_script.py")
     with open(tmp_script, "w") as f:
         f.write(script_content)
 
-    # Build a shell command that loads the module, then runs ParaView.
-    # Using 'bash -lc' so that the module system is initialised.
-    shell_cmd = f'ml {pv_module} 2>/dev/null; "{pv_path}" --script="{tmp_script}"'
     try:
-        proc = subprocess.Popen(
-            ["bash", "-l", "-c", shell_cmd],
-            cwd=_SCRIPT_DIR,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True)
+        if sys.platform == "win32":
+            # Windows: call ParaView executable directly
+            proc = subprocess.Popen(
+                [pv_path, "--script=" + tmp_script],
+                cwd=_SCRIPT_DIR,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True)
+        else:
+            # Linux / macOS: load EasyBuild module, then launch
+            shell_cmd = (f'ml {pv_module} 2>/dev/null; '
+                         f'"{pv_path}" --script="{tmp_script}"')
+            proc = subprocess.Popen(
+                ["bash", "-l", "-c", shell_cmd],
+                cwd=_SCRIPT_DIR,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True)
+
         # Start a thread to watch for early failure (give it a few seconds)
         def _watch():
             try:
@@ -141,10 +156,7 @@ def launch_paraview(script_content, pv_path, pv_module="ParaView"):
                     msg = f"ParaView exited with code {proc.returncode}."
                     if err:
                         msg += f"\n\n{err[:600]}"
-                    # Schedule messagebox on main thread
                     try:
-                        import tkinter as _tk
-                        # If we still have a running Tk instance
                         messagebox.showerror("ParaView Error", msg)
                     except Exception:
                         pass
@@ -423,17 +435,23 @@ class SimGUI(tk.Tk):
         ttk.Button(pv_card, text="Browse…", style="Secondary.TButton",
                     command=self._browse_pv).grid(row=0, column=2)
 
-        ttk.Label(pv_card, text="ParaView module (ml):", style="Card.TLabel").grid(
-            row=1, column=0, sticky="w", pady=5)
+        # ParaView module (EasyBuild) — only shown on Linux
         self.var_pv_module = tk.StringVar(value=self.cfg.get("PARAVIEW_MODULE", "ParaView"))
-        ttk.Entry(pv_card, textvariable=self.var_pv_module, width=30).grid(
-            row=1, column=1, sticky="w", padx=(8, 0))
+        if sys.platform != "win32":
+            ttk.Label(pv_card, text="ParaView module (ml):", style="Card.TLabel").grid(
+                row=1, column=0, sticky="w", pady=5)
+            ttk.Entry(pv_card, textvariable=self.var_pv_module, width=30).grid(
+                row=1, column=1, sticky="w", padx=(8, 0))
 
         pv_card.columnconfigure(1, weight=1)
 
     def _browse_pv(self):
+        if sys.platform == "win32":
+            ftypes = [("Executable files", "*.exe"), ("All files", "*")]
+        else:
+            ftypes = [("All files", "*")]
         p = filedialog.askopenfilename(title="Select ParaView executable",
-                                       filetypes=[("All files", "*")])
+                                       filetypes=ftypes)
         if p:
             self.var_pv_path.set(p)
 
@@ -528,8 +546,10 @@ class SimGUI(tk.Tk):
 
         ttk.Label(dlg, text="Folder path:").grid(row=row, column=0, sticky="w", padx=8, pady=4)
         v_folder = tk.StringVar(value=existing_folder or "")
-        e = ttk.Entry(dlg, textvariable=v_folder, width=30)
-        e.grid(row=row, column=1, sticky="we", padx=8)
+        folder_frm = ttk.Frame(dlg)
+        folder_frm.grid(row=row, column=1, sticky="we", padx=8)
+        e = ttk.Entry(folder_frm, textvariable=v_folder, width=24)
+        e.pack(side="left", fill="x", expand=True)
         if existing_folder:
             e.config(state="disabled")
         entries["folder"] = v_folder
@@ -1488,11 +1508,12 @@ class SimGUI(tk.Tk):
         ttk.Button(btn_row, text="⏹  Stop", style="Danger.TButton",
                     command=self._stop_sim).pack(side="left", padx=4)
 
-        # SDCC checkbox
+        # SDCC checkbox (Linux HPC only — hidden on Windows)
         self.var_sdcc = tk.BooleanVar(value=False)
-        ttk.Checkbutton(btn_card, text="Run on SLURM server (srun --exclusive)",
-                         variable=self.var_sdcc,
-                         style="Card.TCheckbutton").pack(anchor="w", pady=(8, 0))
+        if sys.platform != "win32":
+            ttk.Checkbutton(btn_card, text="Run on SLURM server (srun --exclusive)",
+                             variable=self.var_sdcc,
+                             style="Card.TCheckbutton").pack(anchor="w", pady=(8, 0))
 
         # --- Log output ---
         log_card = self._make_card(outer, "Console Output", pady=(6, 10))
