@@ -12,9 +12,11 @@ REM   python run_simulation.py  — runs a headless simulation
 
 setlocal
 
-set SCRIPT_DIR=%~dp0
-set VENV_DIR=%1
-if "%VENV_DIR%"=="" set VENV_DIR=%SCRIPT_DIR%venv
+set "SCRIPT_DIR=%~dp0"
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+
+set "VENV_DIR=%~1"
+if "%VENV_DIR%"=="" set "VENV_DIR=%SCRIPT_DIR%\venv"
 
 echo === BeamOnTarget Installer ===
 echo   Source:  %SCRIPT_DIR%
@@ -24,16 +26,20 @@ echo.
 if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo Creating virtual environment...
     python -m venv "%VENV_DIR%"
+    if errorlevel 1 goto :error
 )
 
 echo Activating environment...
 call "%VENV_DIR%\Scripts\activate.bat"
+if errorlevel 1 goto :error
 
 echo Upgrading pip...
-pip install --upgrade pip setuptools wheel
+"%VENV_DIR%\Scripts\python.exe" -m pip install --upgrade pip setuptools wheel
+if errorlevel 1 goto :error
 
 echo Installing BeamOnTarget...
-pip install -e "%SCRIPT_DIR%"
+"%VENV_DIR%\Scripts\python.exe" -m pip install -e "%SCRIPT_DIR%"
+if errorlevel 1 goto :error
 
 echo.
 echo === Installation complete ===
@@ -45,3 +51,10 @@ echo   python run_simulation.py      — run a simulation
 echo.
 
 endlocal
+exit /b 0
+
+:error
+echo.
+echo ERROR: Installation failed. Review the message above.
+endlocal
+exit /b 1
