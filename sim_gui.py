@@ -353,6 +353,8 @@ class SimGUI(tk.Tk):
                               command=self._view_geometry_o3d)
         view_menu.add_command(label="View Results (Open3D)…",
                               command=self._view_results_o3d)
+        view_menu.add_command(label="View Sources (Open3D)…",
+                              command=self._view_sources_o3d)
         view_menu.add_separator()
         view_menu.add_command(label="View Geometry (ParaView)…",
                               command=self._view_geometry)
@@ -586,19 +588,32 @@ class SimGUI(tk.Tk):
 
     def _view_geometry_o3d(self):
         """Open the built-in Open3D geometry viewer with folder selection."""
-        viewer.view_geometry(self, _SCRIPT_DIR, self.cfg.get("GEOMETRY_FOLDERS", {}))
+        src_dir = self.var_src_dir.get()
+        viewer.view_geometry(self, _SCRIPT_DIR,
+                             self.cfg.get("GEOMETRY_FOLDERS", {}),
+                             source_dir=src_dir)
 
     def _view_results_o3d(self):
         """Open the built-in Open3D results viewer with heatmap colouring."""
         outdir = self.var_outdir.get()
+        src_dir = self.var_src_dir.get()
         viewer.view_results(self, _SCRIPT_DIR, outdir,
-                            geometry_folders=self.cfg.get("GEOMETRY_FOLDERS", {}))
+                            geometry_folders=self.cfg.get("GEOMETRY_FOLDERS", {}),
+                            source_dir=src_dir)
 
     def _view_all_o3d(self):
         """Open the built-in Open3D viewer showing geometry + results."""
         outdir = self.var_outdir.get()
+        src_dir = self.var_src_dir.get()
         viewer.view_all(self, _SCRIPT_DIR, outdir,
-                        self.cfg.get("GEOMETRY_FOLDERS", {}))
+                        self.cfg.get("GEOMETRY_FOLDERS", {}),
+                        source_dir=src_dir)
+
+    def _view_sources_o3d(self):
+        """Open the built-in Open3D source viewer showing beamlet positions."""
+        src_dir = self.var_src_dir.get()
+        viewer.view_sources(self, _SCRIPT_DIR, src_dir,
+                            geometry_folders=self.cfg.get("GEOMETRY_FOLDERS", {}))
 
     # ------------------------------------------------------------------
     #  PARTICLES tab
@@ -663,8 +678,14 @@ class SimGUI(tk.Tk):
                                       relief="solid")
         self.bl_listbox.pack(fill="both", expand=True, pady=(0, 6))
         self._refresh_bl_list()
-        ttk.Button(bl_card, text="↻ Refresh", style="Secondary.TButton",
-                    command=self._refresh_bl_list).pack(anchor="w")
+
+        bl_btn_frm = ttk.Frame(bl_card, style="Card.TFrame")
+        bl_btn_frm.pack(fill="x")
+        ttk.Button(bl_btn_frm, text="↻ Refresh", style="Secondary.TButton",
+                    command=self._refresh_bl_list).pack(side="left")
+        ttk.Button(bl_btn_frm, text="👁 View Sources (Open3D)",
+                    style="Secondary.TButton",
+                    command=self._view_sources_o3d).pack(side="right")
 
     def _refresh_bl_list(self):
         self.bl_listbox.delete(0, "end")
@@ -751,7 +772,7 @@ class SimGUI(tk.Tk):
         btn_frm.pack(fill="x", pady=(8, 0))
         ttk.Button(btn_frm, text="👁 Results (Open3D)", style="Secondary.TButton",
                     command=self._view_results_o3d).pack(side="left", padx=(0, 8))
-        ttk.Button(btn_frm, text="🔍 Results (ParaView)", style="Secondary.TButton",
+        ttk.Button(btn_frm, text="�🔍 Results (ParaView)", style="Secondary.TButton",
                     command=self._view_results).pack(side="left")
 
     def _view_results(self):
