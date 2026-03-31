@@ -16,6 +16,12 @@ import subprocess
 import glob
 import threading
 
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend; we blit to Tk canvases
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
 import viewer  # built-in Open3D viewer
 
 # ---------------------------------------------------------------------------
@@ -711,8 +717,39 @@ class SimGUI(tk.Tk):
     #  OUTPUT tab
     # ------------------------------------------------------------------
     def _build_output_tab(self, nb):
-        outer = ttk.Frame(nb)
-        nb.add(outer, text="  📁  Output  ")
+        # Top-level: horizontal PanedWindow (left = cards, right = plots)
+        outer_wrapper = ttk.Frame(nb)
+        nb.add(outer_wrapper, text="  📁  Output  ")
+
+        top_pw = ttk.PanedWindow(outer_wrapper, orient="horizontal")
+        top_pw.pack(fill="both", expand=True)
+
+        # ============================================================
+        # LEFT side — scrollable cards
+        # ============================================================
+        left_wrapper = ttk.Frame(top_pw)
+        top_pw.add(left_wrapper, weight=1)
+
+        out_canvas = tk.Canvas(left_wrapper, borderwidth=0,
+                               highlightthickness=0,
+                               bg=self._colours["bg"])
+        out_vscroll = ttk.Scrollbar(left_wrapper, orient="vertical",
+                                     command=out_canvas.yview)
+        outer = ttk.Frame(out_canvas)
+        outer.bind("<Configure>",
+                   lambda e: out_canvas.configure(
+                       scrollregion=out_canvas.bbox("all")))
+        out_canvas.create_window((0, 0), window=outer, anchor="nw")
+        out_canvas.configure(yscrollcommand=out_vscroll.set)
+        out_canvas.pack(side="left", fill="both", expand=True)
+        out_vscroll.pack(side="right", fill="y")
+        # Mouse-wheel scrolling
+        def _on_mousewheel(event):
+            out_canvas.yview_scroll(-1 if event.num == 4 else 1, "units")
+        out_canvas.bind("<Button-4>", _on_mousewheel)
+        out_canvas.bind("<Button-5>", _on_mousewheel)
+        outer.bind("<Button-4>", _on_mousewheel)
+        outer.bind("<Button-5>", _on_mousewheel)
 
         # --- Paths card ---
         card = self._make_card(outer, "Output Settings", pady=(12, 10))
@@ -772,8 +809,530 @@ class SimGUI(tk.Tk):
         btn_frm.pack(fill="x", pady=(8, 0))
         ttk.Button(btn_frm, text="👁 Results (Open3D)", style="Secondary.TButton",
                     command=self._view_results_o3d).pack(side="left", padx=(0, 8))
-        ttk.Button(btn_frm, text="�🔍 Results (ParaView)", style="Secondary.TButton",
+        ttk.Button(btn_frm, text="🔍 Results (ParaView)", style="Secondary.TButton",
                     command=self._view_results).pack(side="left")
+
+        # --- Summary Reports card ---
+        sum_card = self._make_card(outer, "Summary Reports")
+
+        # Top row: smoothed checkbox + refresh + load buttons
+        sel_frm = ttk.Frame(sum_card, style="Card.TFrame")
+        sel_frm.pack(fill="x", pady=(0, 6))
+
+        self.var_csv_use_smoothed = tk.BooleanVar(value=True)
+        ttk.Checkbutton(sel_frm, text="Use smoothed if available",
+                         variable=self.var_csv_use_smoothed,
+                         style="Card.TCheckbutton").pack(side="left", padx=(0, 12))
+
+        ttk.Button(sel_frm, text="↻ Refresh", style="Secondary.TButton",
+                    command=self._refresh_csv_result_sets).pack(side="left", padx=(0, 4))
+        ttk.Button(sel_frm, text="📊 Load Selected", style="Secondary.TButton",
+                    command=self._load_summary_csv).pack(side="left", padx=4)
+
+        # Simulation selector (checkable listbox)
+        sim_lbl_frm = ttk.Frame(sum_card, style="Card.TFrame")
+        sim_lbl_frm.pack(fill="x")
+        ttk.Label(sim_lbl_frm, text="Simulations:",
+                  style="Card.TLabel").pack(side="left")
+        ttk.Button(sim_lbl_frm, text="All", style="Secondary.TButton",
+                    command=self._csv_select_all).pack(side="right", padx=2)
+        ttk.Button(sim_lbl_frm, text="None", style="Secondary.TButton",
+                    command=self._csv_select_none).pack(side="right", padx=2)
+
+        sim_list_frm = ttk.Frame(sum_card, style="Card.TFrame")
+        sim_list_frm.pack(fill="x", pady=(2, 6))
+        self._csv_sim_vars = {}  # name → BooleanVar
+        sim_canvas = tk.Canvas(sim_list_frm, height=80, borderwidth=0,
+                               highlightthickness=0, bg="white")
+        sim_sb = ttk.Scrollbar(sim_list_frm, orient="vertical",
+                                command=sim_canvas.yview)
+        self._csv_sim_inner = ttk.Frame(sim_canvas, style="Card.TFrame")
+        self._csv_sim_inner.bind(
+            "<Configure>",
+            lambda e: sim_canvas.configure(
+                scrollregion=sim_canvas.bbox("all")))
+        sim_canvas.create_window((0, 0), window=self._csv_sim_inner,
+                                  anchor="nw")
+        sim_canvas.configure(yscrollcommand=sim_sb.set)
+        sim_canvas.pack(side="left", fill="both", expand=True)
+        sim_sb.pack(side="right", fill="y")
+        self._csv_sim_canvas = sim_canvas
+
+        # Treeview for CSV data (shows first selected sim)
+        ttk.Label(sum_card, text="Table (first selected sim):",
+                  style="Card.TLabel").pack(anchor="w", pady=(2, 2))
+        csv_tree_frm = ttk.Frame(sum_card, style="Card.TFrame")
+        csv_tree_frm.pack(fill="both", expand=True)
+
+        csv_cols = ("object", "total_power", "peak_density", "source")
+        self.csv_tree = ttk.Treeview(csv_tree_frm, columns=csv_cols,
+                                      show="headings", height=8)
+        self.csv_tree.heading("object", text="Object")
+        self.csv_tree.heading("total_power", text="Total Power [W]")
+        self.csv_tree.heading("peak_density", text="Peak Density [W/m²]")
+        self.csv_tree.heading("source", text="Source")
+        self.csv_tree.column("object", width=160, anchor="w")
+        self.csv_tree.column("total_power", width=130, anchor="e")
+        self.csv_tree.column("peak_density", width=130, anchor="e")
+        self.csv_tree.column("source", width=70, anchor="center")
+
+        csv_vsb = ttk.Scrollbar(csv_tree_frm, orient="vertical",
+                                 command=self.csv_tree.yview)
+        self.csv_tree.configure(yscrollcommand=csv_vsb.set)
+        self.csv_tree.pack(side="left", fill="both", expand=True)
+        csv_vsb.pack(side="right", fill="y")
+
+        # Total power row
+        self.var_csv_total_power = tk.StringVar(value="")
+        ttk.Label(sum_card, textvariable=self.var_csv_total_power,
+                  style="Card.TLabel",
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(6, 0))
+
+        # Status / totals row
+        self.var_csv_status = tk.StringVar(
+            value="Refresh, select simulations, then click Load.")
+        ttk.Label(sum_card, textvariable=self.var_csv_status,
+                  style="Card.TLabel",
+                  foreground=self._colours["dim"]).pack(anchor="w", pady=(4, 0))
+
+        # ============================================================
+        # RIGHT side — component filter + matplotlib bar charts
+        # ============================================================
+        right_frm = ttk.Frame(top_pw, style="Card.TFrame", padding=8)
+        top_pw.add(right_frm, weight=1)
+
+        ttk.Label(right_frm, text="Comparison Charts",
+                  style="CardHeader.TLabel").pack(anchor="w", pady=(0, 4))
+
+        # Horizontal split: component list | plots
+        chart_pw = ttk.PanedWindow(right_frm, orient="horizontal")
+        chart_pw.pack(fill="both", expand=True)
+
+        # ---- Component filter (left of plots) ----
+        comp_frm = ttk.Frame(chart_pw, style="Card.TFrame")
+        chart_pw.add(comp_frm, weight=0)
+
+        comp_hdr = ttk.Frame(comp_frm, style="Card.TFrame")
+        comp_hdr.pack(fill="x", pady=(0, 2))
+        ttk.Label(comp_hdr, text="Components:",
+                  style="Card.TLabel").pack(anchor="w")
+        btn_row_comp = ttk.Frame(comp_frm, style="Card.TFrame")
+        btn_row_comp.pack(fill="x", pady=(0, 2))
+        ttk.Button(btn_row_comp, text="All", style="Secondary.TButton",
+                    command=self._chart_comp_select_all).pack(
+                        side="left", padx=(0, 2))
+        ttk.Button(btn_row_comp, text="None", style="Secondary.TButton",
+                    command=self._chart_comp_select_none).pack(
+                        side="left", padx=2)
+        ttk.Button(btn_row_comp, text="↻ Plot", style="Secondary.TButton",
+                    command=self._update_csv_bar_plots).pack(
+                        side="left", padx=2)
+
+        # Log-scale checkboxes
+        log_frm = ttk.Frame(comp_frm, style="Card.TFrame")
+        log_frm.pack(fill="x", pady=(2, 2))
+        self.var_chart_log_peak = tk.BooleanVar(value=False)
+        ttk.Checkbutton(log_frm, text="Log scale (peak)",
+                         variable=self.var_chart_log_peak,
+                         style="Card.TCheckbutton").pack(anchor="w")
+        self.var_chart_log_power = tk.BooleanVar(value=False)
+        ttk.Checkbutton(log_frm, text="Log scale (power)",
+                         variable=self.var_chart_log_power,
+                         style="Card.TCheckbutton").pack(anchor="w")
+
+        comp_list_frm = ttk.Frame(comp_frm, style="Card.TFrame")
+        comp_list_frm.pack(fill="both", expand=True, pady=(2, 0))
+        self._chart_comp_vars = {}  # object_name → BooleanVar
+        comp_canvas = tk.Canvas(comp_list_frm, width=120, borderwidth=0,
+                                highlightthickness=0, bg="white")
+        comp_sb = ttk.Scrollbar(comp_list_frm, orient="vertical",
+                                 command=comp_canvas.yview)
+        self._chart_comp_inner = ttk.Frame(comp_canvas, style="Card.TFrame")
+        self._chart_comp_inner.bind(
+            "<Configure>",
+            lambda e: comp_canvas.configure(
+                scrollregion=comp_canvas.bbox("all")))
+        comp_canvas.create_window((0, 0), window=self._chart_comp_inner,
+                                   anchor="nw")
+        comp_canvas.configure(yscrollcommand=comp_sb.set)
+        comp_canvas.pack(side="left", fill="both", expand=True)
+        comp_sb.pack(side="right", fill="y")
+
+        # ---- Plots (right of component list) ----
+        plot_frm = ttk.Frame(chart_pw, style="Card.TFrame")
+        chart_pw.add(plot_frm, weight=1)
+
+        self._csv_fig = Figure(figsize=(5, 6), dpi=100,
+                                facecolor="white", tight_layout=True)
+        self._csv_ax_peak = self._csv_fig.add_subplot(2, 1, 1)
+        self._csv_ax_power = self._csv_fig.add_subplot(2, 1, 2)
+        self._csv_canvas_mpl = FigureCanvasTkAgg(self._csv_fig, plot_frm)
+        self._csv_canvas_mpl.get_tk_widget().pack(fill="both", expand=True)
+
+        # Initialise empty chart labels
+        self._csv_ax_peak.set_title("Peak Heat Load [W/m²]", fontsize=10)
+        self._csv_ax_power.set_title("Total Power [W]", fontsize=10)
+        self._csv_fig.tight_layout()
+        self._csv_canvas_mpl.draw()
+
+        # Internal data store:  { sim_name: [{ name, tp, pd, source }, …] }
+        self._csv_plot_data = {}
+
+        # Populate the simulation checklist on build
+        self._refresh_csv_result_sets()
+
+    def _refresh_csv_result_sets(self):
+        """Scan the output directory and populate the simulation check-list."""
+        outdir = self.var_outdir.get()
+        outdir_abs = (os.path.join(_SCRIPT_DIR, outdir)
+                      if not os.path.isabs(outdir) else outdir)
+        sets = []
+        if os.path.isdir(outdir_abs):
+            for d in sorted(os.listdir(outdir_abs)):
+                sub = os.path.join(outdir_abs, d)
+                if os.path.isdir(sub):
+                    sets.append(d)
+        # Rebuild checkbox list
+        for w in self._csv_sim_inner.winfo_children():
+            w.destroy()
+        self._csv_sim_vars.clear()
+        for name in sets:
+            var = tk.BooleanVar(value=True)
+            cb = ttk.Checkbutton(self._csv_sim_inner, text=name,
+                                  variable=var, style="Card.TCheckbutton")
+            cb.pack(anchor="w", padx=2, pady=1)
+            self._csv_sim_vars[name] = var
+
+    def _csv_select_all(self):
+        for v in self._csv_sim_vars.values():
+            v.set(True)
+
+    def _csv_select_none(self):
+        for v in self._csv_sim_vars.values():
+            v.set(False)
+
+    def _chart_comp_select_all(self):
+        for v in self._chart_comp_vars.values():
+            v.set(True)
+
+    def _chart_comp_select_none(self):
+        for v in self._chart_comp_vars.values():
+            v.set(False)
+
+    def _refresh_chart_comp_list(self):
+        """Rebuild the component checklist from loaded plot data."""
+        # Collect union of all object names in display order
+        all_objects = []
+        for entries in self._csv_plot_data.values():
+            for e in entries:
+                if e["name"] not in all_objects:
+                    all_objects.append(e["name"])
+
+        # Preserve previous selections where possible
+        prev = {k: v.get() for k, v in self._chart_comp_vars.items()}
+
+        for w in self._chart_comp_inner.winfo_children():
+            w.destroy()
+        self._chart_comp_vars.clear()
+
+        for name in all_objects:
+            var = tk.BooleanVar(value=prev.get(name, True))
+            cb = ttk.Checkbutton(self._chart_comp_inner, text=name,
+                                  variable=var, style="Card.TCheckbutton")
+            cb.pack(anchor="w", padx=2, pady=1)
+            self._chart_comp_vars[name] = var
+
+    def _load_summary_csv(self):
+        """Load summary CSV data for all selected simulations.
+
+        For each selected simulation, always loads the raw CSV first,
+        then — if the 'Use smoothed' checkbox is checked — overlays
+        smoothed values where available.
+
+        The table shows the first selected simulation; the bar plots
+        compare all selected simulations side-by-side.
+        """
+        import csv as csv_mod
+
+        selected = [name for name, var in self._csv_sim_vars.items()
+                     if var.get()]
+        if not selected:
+            self.var_csv_status.set("No simulations selected.")
+            return
+
+        outdir = self.var_outdir.get()
+        outdir_abs = (os.path.join(_SCRIPT_DIR, outdir)
+                      if not os.path.isabs(outdir) else outdir)
+
+        # --- helper: find first existing CSV from a list of candidates ---
+        def _find_csv(search_dir, extra_candidates=None):
+            candidates = list(extra_candidates or [])
+            if os.path.isdir(search_dir):
+                for f in sorted(glob.glob(os.path.join(search_dir, "*.csv"))):
+                    if f not in candidates:
+                        candidates.append(f)
+            for c in candidates:
+                if os.path.isfile(c):
+                    return c
+            return None
+
+        # --- helper: read CSV → list[dict] ---
+        def _read_csv(path):
+            with open(path, "r", newline="") as fh:
+                return list(csv_mod.DictReader(fh))
+
+        # --- helper: detect column keys ---
+        def _detect_keys(rows):
+            name_key = power_key = density_key = None
+            if not rows:
+                return None, None, None
+            keys = list(rows[0].keys())
+            for k in keys:
+                kl = k.lower()
+                if "name" in kl or "file" in kl:
+                    name_key = k
+                elif "total" in kl and "power" in kl:
+                    power_key = k
+                elif "peak" in kl or "density" in kl:
+                    density_key = k
+            if name_key is None and len(keys) >= 1:
+                name_key = keys[0]
+            if power_key is None and len(keys) >= 2:
+                power_key = keys[1]
+            if density_key is None and len(keys) >= 3:
+                density_key = keys[2]
+            return name_key, power_key, density_key
+
+        # --- helper: normalise object name for matching ---
+        def _norm(name):
+            base = os.path.splitext(os.path.basename(str(name)))[0]
+            for prefix in ("results_", "smoothed_"):
+                if base.startswith(prefix):
+                    base = base[len(prefix):]
+                    break
+            return base
+
+        # --- Load data for every selected simulation ---
+        self._csv_plot_data.clear()
+        first_display_order = None
+        first_merged = None
+        first_raw_path = None
+        n_loaded = 0
+        n_errors = 0
+
+        for result_set in selected:
+            base_dir = os.path.join(outdir_abs, result_set)
+            raw_candidates = [
+                os.path.join(base_dir, f"summary_{result_set}.csv"),
+                os.path.join(base_dir, "summary_report.csv"),
+                os.path.join(base_dir, "power_summary_by_object.csv"),
+            ]
+            raw_path = _find_csv(base_dir, raw_candidates)
+            if raw_path is None:
+                n_errors += 1
+                continue
+
+            try:
+                raw_rows = _read_csv(raw_path)
+            except Exception:
+                n_errors += 1
+                continue
+
+            raw_nk, raw_pk, raw_dk = _detect_keys(raw_rows)
+
+            merged = {}
+            display_order = []
+            for row in raw_rows:
+                obj_raw = row.get(raw_nk, "?") if raw_nk else "?"
+                obj = _norm(obj_raw)
+                tp = row.get(raw_pk, "N/A") if raw_pk else "N/A"
+                pd_ = row.get(raw_dk, "N/A") if raw_dk else "N/A"
+                merged[obj] = {"name": obj, "tp": tp, "pd": pd_,
+                               "source": "raw"}
+                if obj not in display_order:
+                    display_order.append(obj)
+
+            # Overlay smoothed if requested
+            if self.var_csv_use_smoothed.get():
+                sm_dir = os.path.join(base_dir, "SMOOTHED")
+                sm_candidates = [
+                    os.path.join(sm_dir, "smoothed_summary.csv"),
+                    os.path.join(sm_dir, "summary_report.csv"),
+                ]
+                smoothed_path = _find_csv(sm_dir, sm_candidates)
+                if smoothed_path:
+                    try:
+                        sm_rows = _read_csv(smoothed_path)
+                        sm_nk, sm_pk, sm_dk = _detect_keys(sm_rows)
+                        for row in sm_rows:
+                            obj_raw = row.get(sm_nk, "?") if sm_nk else "?"
+                            obj = _norm(obj_raw)
+                            tp = row.get(sm_pk, "N/A") if sm_pk else "N/A"
+                            pd_ = row.get(sm_dk, "N/A") if sm_dk else "N/A"
+                            if obj in merged:
+                                merged[obj] = {
+                                    "name": merged[obj]["name"],
+                                    "tp": tp, "pd": pd_,
+                                    "source": "smoothed"}
+                            else:
+                                merged[obj] = {
+                                    "name": obj, "tp": tp, "pd": pd_,
+                                    "source": "smoothed"}
+                                display_order.append(obj)
+                    except Exception:
+                        pass
+
+            # Store
+            entries = [merged[o] for o in display_order]
+            self._csv_plot_data[result_set] = entries
+            n_loaded += 1
+
+            if first_merged is None:
+                first_merged = merged
+                first_display_order = display_order
+                first_raw_path = raw_path
+
+        # --- Populate treeview with first simulation ---
+        for item in self.csv_tree.get_children():
+            self.csv_tree.delete(item)
+
+        total_power_sum = 0.0
+        peak_max = 0.0
+        if first_merged and first_display_order:
+            for obj in first_display_order:
+                d = first_merged[obj]
+                self.csv_tree.insert("", "end",
+                                     values=(d["name"], d["tp"], d["pd"],
+                                             d["source"]))
+                try:
+                    total_power_sum += float(d["tp"])
+                except (ValueError, TypeError):
+                    pass
+                try:
+                    peak_max = max(peak_max, float(d["pd"]))
+                except (ValueError, TypeError):
+                    pass
+
+        if total_power_sum > 0:
+            self.var_csv_total_power.set(
+                f"Total deposited power:  {total_power_sum:.4e} W")
+        else:
+            self.var_csv_total_power.set("")
+
+        info_parts = []
+        if first_raw_path:
+            info_parts.append(os.path.basename(first_raw_path))
+        info_parts.append(f"{n_loaded} sim(s) loaded")
+        if n_errors:
+            info_parts.append(f"{n_errors} failed")
+        if peak_max > 0:
+            info_parts.append(f"Max peak = {peak_max:.4e} W/m²")
+        self.var_csv_status.set("  |  ".join(info_parts))
+
+        # --- Refresh component checklist & update bar plots ---
+        self._refresh_chart_comp_list()
+        self._update_csv_bar_plots()
+
+    # ------------------------------------------------------------------
+    #  Bar-plot rendering
+    # ------------------------------------------------------------------
+    def _update_csv_bar_plots(self):
+        """Redraw the two bar charts from self._csv_plot_data."""
+        import numpy as np
+
+        ax_peak = self._csv_ax_peak
+        ax_power = self._csv_ax_power
+        ax_peak.clear()
+        ax_power.clear()
+
+        data = self._csv_plot_data  # { sim_name: [{ name, tp, pd, source }] }
+        if not data:
+            ax_peak.set_title("Peak Heat Load [W/m²]", fontsize=10)
+            ax_power.set_title("Total Power [W]", fontsize=10)
+            self._csv_fig.tight_layout()
+            self._csv_canvas_mpl.draw()
+            return
+
+        sim_names = list(data.keys())
+
+        # Collect union of all object names, filtered by component checklist
+        all_objects = []
+        for sim in sim_names:
+            for entry in data[sim]:
+                if entry["name"] not in all_objects:
+                    all_objects.append(entry["name"])
+        # Apply component filter (if checklist is populated)
+        if self._chart_comp_vars:
+            all_objects = [o for o in all_objects
+                           if self._chart_comp_vars.get(o, tk.BooleanVar(value=True)).get()]
+
+        n_objects = len(all_objects)
+        n_sims = len(sim_names)
+
+        if n_objects == 0:
+            self._csv_fig.tight_layout()
+            self._csv_canvas_mpl.draw()
+            return
+
+        # Colour palette
+        cmap = plt.get_cmap("tab10")
+        colours = [cmap(i % 10) for i in range(n_sims)]
+
+        x = np.arange(n_objects)
+        total_bar_width = 0.8
+        bar_width = total_bar_width / max(n_sims, 1)
+
+        for si, sim in enumerate(sim_names):
+            # Build lookup for this sim
+            lookup = {e["name"]: e for e in data[sim]}
+            peaks = []
+            powers = []
+            for obj in all_objects:
+                e = lookup.get(obj)
+                if e:
+                    try:
+                        peaks.append(float(e["pd"]))
+                    except (ValueError, TypeError):
+                        peaks.append(0.0)
+                    try:
+                        powers.append(float(e["tp"]))
+                    except (ValueError, TypeError):
+                        powers.append(0.0)
+                else:
+                    peaks.append(0.0)
+                    powers.append(0.0)
+
+            offset = (si - (n_sims - 1) / 2) * bar_width
+            label = sim if len(sim) <= 30 else sim[:27] + "…"
+            ax_peak.bar(x + offset, peaks, bar_width * 0.9,
+                        label=label, color=colours[si], edgecolor="white",
+                        linewidth=0.5)
+            ax_power.bar(x + offset, powers, bar_width * 0.9,
+                         label=label, color=colours[si], edgecolor="white",
+                         linewidth=0.5)
+
+        # Formatting
+        for ax, title, unit, log_var in [
+            (ax_peak, "Peak Heat Load", "W/m²", self.var_chart_log_peak),
+            (ax_power, "Total Deposited Power", "W", self.var_chart_log_power),
+        ]:
+            ax.set_title(f"{title} [{unit}]", fontsize=10, fontweight="bold")
+            ax.set_xticks(x)
+            ax.set_xticklabels(all_objects, rotation=45, ha="right",
+                               fontsize=8)
+            ax.set_ylabel(unit, fontsize=9)
+            if log_var.get():
+                ax.set_yscale("log")
+            else:
+                ax.set_yscale("linear")
+                ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+            ax.grid(axis="y", alpha=0.3, linewidth=0.5)
+            ax.set_axisbelow(True)
+            if n_sims > 1:
+                ax.legend(fontsize=7, loc="upper right", framealpha=0.8)
+
+        self._csv_fig.tight_layout()
+        self._csv_canvas_mpl.draw()
 
     def _view_results(self):
         outdir = self.var_outdir.get()

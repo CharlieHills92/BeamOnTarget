@@ -1,0 +1,9 @@
+numpy>=1.24
+scipy>=1.10
+trimesh[easy]>=4.0
+pyembree>=0.2
+embreex>=2.17
+pyvista>=0.42
+pandas>=2.0
+tqdm>=4.65
+joblib>=1.3
