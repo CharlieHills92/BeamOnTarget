@@ -45,6 +45,7 @@ echo.
 echo === Installation complete ===
 echo.
 echo To use:
+echo   BeamOnTarget.cmd              ^<^< double-click to launch the GUI
 echo   %VENV_DIR%\Scripts\activate
 echo   beamontarget                  — launch the GUI
 echo   python run_simulation.py      — run a simulation
