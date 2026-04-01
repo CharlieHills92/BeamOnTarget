@@ -68,20 +68,23 @@ class _SimulationStream:
         pass
 
 
-def _run_simulation_frozen():
+def _run_simulation_frozen(log_fn=None):
     """Run the bundled run_simulation module directly when frozen."""
-    import io
+    class _LiveStream:
+        def write(self, text):
+            if text and log_fn:
+                log_fn(text)
+        def flush(self):
+            pass
 
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     old_cwd = os.getcwd()
 
-    capture = io.StringIO()
-    sys.stdout = capture
-    sys.stderr = capture
+    sys.stdout = _LiveStream()
+    sys.stderr = _LiveStream()
 
     try:
-        # Set cwd to the exe's folder so relative paths in config resolve correctly
         os.chdir(_SCRIPT_DIR)
         import run_simulation
         run_simulation.main()
@@ -89,10 +92,6 @@ def _run_simulation_frozen():
         sys.stdout = old_stdout
         sys.stderr = old_stderr
         os.chdir(old_cwd)
-        output = capture.getvalue()
-        capture.close()
-
-    return output
 
 
 # ===================================================================
@@ -1724,11 +1723,8 @@ class SimGUI(tk.Tk):
         def _worker():
             try:
                 if _IS_FROZEN:
-                    # Running from PyInstaller exe: run directly in process
-                    output = _run_simulation_frozen()
-                    for line in output.split('\n'):
-                        if line:
-                            self._log(line + '\n')
+                    # Running from PyInstaller exe: stream output live via log_fn
+                    _run_simulation_frozen(log_fn=self._log)
                     self._sim_process = None
                     rc = 0
                 elif self.var_sdcc.get():
