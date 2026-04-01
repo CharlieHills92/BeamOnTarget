@@ -344,8 +344,8 @@ class SimGUI(tk.Tk):
         self._build_geometry_tab(notebook)
         self._build_particles_tab(notebook)
         self._build_output_tab(notebook)
-        self._build_smoothing_tab(notebook)
         self._build_run_tab(notebook)
+        self._build_results_tab(notebook)
 
     # ------------------------------------------------------------------
     #  Menu bar
@@ -550,6 +550,27 @@ class SimGUI(tk.Tk):
         folder_frm.grid(row=row, column=1, sticky="we", padx=8)
         e = ttk.Entry(folder_frm, textvariable=v_folder, width=24)
         e.pack(side="left", fill="x", expand=True)
+
+        def _browse_geo_folder():
+            d = filedialog.askdirectory(
+                initialdir=_SCRIPT_DIR,
+                title="Select geometry folder",
+                parent=dlg,
+            )
+            if d:
+                try:
+                    rel = os.path.relpath(d, _SCRIPT_DIR)
+                except ValueError:
+                    rel = d  # different drive on Windows
+                if existing_folder:
+                    e.config(state="normal")
+                v_folder.set(rel)
+                if existing_folder:
+                    e.config(state="disabled")
+
+        ttk.Button(folder_frm, text="Browse…", command=_browse_geo_folder).pack(
+            side="left", padx=(4, 0)
+        )
         if existing_folder:
             e.config(state="disabled")
         entries["folder"] = v_folder
@@ -598,6 +619,9 @@ class SimGUI(tk.Tk):
             new_s["max_impact_records"] = int(mir_val) if mir_val else None
             if "GEOMETRY_FOLDERS" not in self.cfg:
                 self.cfg["GEOMETRY_FOLDERS"] = {}
+            # If the folder was renamed via Browse, remove the old key
+            if existing_folder and folder_name != existing_folder:
+                self.cfg["GEOMETRY_FOLDERS"].pop(existing_folder, None)
             self.cfg["GEOMETRY_FOLDERS"][folder_name] = new_s
             self._populate_geo_tree()
             dlg.destroy()
@@ -669,7 +693,7 @@ class SimGUI(tk.Tk):
             row=row, column=1, sticky="w", padx=(8, 0))
 
         row += 1
-        ttk.Label(card, text="Beamlet radius (m):", style="Card.TLabel").grid(
+        ttk.Label(card, text="Beamlet grid radius (m):", style="Card.TLabel").grid(
             row=row, column=0, sticky="w", pady=5)
         self.var_radius = tk.DoubleVar(value=self.cfg.get("BEAMLET_RADIUS_M", 0.007))
         ttk.Entry(card, textvariable=self.var_radius, width=12).grid(
@@ -737,39 +761,8 @@ class SimGUI(tk.Tk):
     #  OUTPUT tab
     # ------------------------------------------------------------------
     def _build_output_tab(self, nb):
-        # Top-level: horizontal PanedWindow (left = cards, right = plots)
-        outer_wrapper = ttk.Frame(nb)
-        nb.add(outer_wrapper, text="  📁  Output  ")
-
-        top_pw = ttk.PanedWindow(outer_wrapper, orient="horizontal")
-        top_pw.pack(fill="both", expand=True)
-
-        # ============================================================
-        # LEFT side — scrollable cards
-        # ============================================================
-        left_wrapper = ttk.Frame(top_pw)
-        top_pw.add(left_wrapper, weight=1)
-
-        out_canvas = tk.Canvas(left_wrapper, borderwidth=0,
-                               highlightthickness=0,
-                               bg=self._colours["bg"])
-        out_vscroll = ttk.Scrollbar(left_wrapper, orient="vertical",
-                                     command=out_canvas.yview)
-        outer = ttk.Frame(out_canvas)
-        outer.bind("<Configure>",
-                   lambda e: out_canvas.configure(
-                       scrollregion=out_canvas.bbox("all")))
-        out_canvas.create_window((0, 0), window=outer, anchor="nw")
-        out_canvas.configure(yscrollcommand=out_vscroll.set)
-        out_canvas.pack(side="left", fill="both", expand=True)
-        out_vscroll.pack(side="right", fill="y")
-        # Mouse-wheel scrolling
-        def _on_mousewheel(event):
-            out_canvas.yview_scroll(-1 if event.num == 4 else 1, "units")
-        out_canvas.bind("<Button-4>", _on_mousewheel)
-        out_canvas.bind("<Button-5>", _on_mousewheel)
-        outer.bind("<Button-4>", _on_mousewheel)
-        outer.bind("<Button-5>", _on_mousewheel)
+        outer = ttk.Frame(nb)
+        nb.add(outer, text="  📁  Output  ")
 
         # --- Paths card ---
         card = self._make_card(outer, "Output Settings", pady=(12, 10))
@@ -788,12 +781,6 @@ class SimGUI(tk.Tk):
         self.var_summary = tk.StringVar(value=self.cfg.get("SUMMARY_CSV_FILENAME", "power_summary_by_object.csv"))
         ttk.Entry(card, textvariable=self.var_summary, width=40).grid(
             row=1, column=1, sticky="we", padx=(8, 0))
-
-        ttk.Label(card, text="Rays to show in plot:", style="Card.TLabel").grid(
-            row=2, column=0, sticky="w", pady=5)
-        self.var_nrays = tk.IntVar(value=self.cfg.get("NUM_RAYS_TO_SHOW_IN_PLOT", 0))
-        ttk.Entry(card, textvariable=self.var_nrays, width=10).grid(
-            row=2, column=1, sticky="w", padx=(8, 0))
 
         card.columnconfigure(1, weight=1)
 
@@ -815,193 +802,29 @@ class SimGUI(tk.Tk):
                     command=self._open_extract_dialog).pack(
                         anchor="w", pady=(8, 0))
 
-        # --- Visualisation card ---
-        vis_card = self._make_card(outer, "Visualisation")
+        # --- Post-Processing Smoother card ---
+        sm_card = self._make_card(outer, "Post-Processing Smoother")
 
-        vis_checks = [
-            ("ENABLE_VISUALIZATION", "Enable visualisation (master switch)"),
-        ]
-        for key, label in vis_checks:
-            v = tk.BooleanVar(value=self.cfg.get(key, False))
-            ttk.Checkbutton(vis_card, text=label, variable=v,
-                             style="Card.TCheckbutton").pack(anchor="w", pady=2)
-            setattr(self, f"var_{key}", v)
+        self.var_smoother = tk.BooleanVar(value=self.cfg.get("RUN_SMOOTHER_AFTER_SIM", False))
+        ttk.Checkbutton(sm_card, text="Run batch smoother after simulation",
+                         variable=self.var_smoother,
+                         style="Card.TCheckbutton").pack(anchor="w", pady=(0, 8))
 
-        btn_frm = ttk.Frame(vis_card, style="Card.TFrame")
-        btn_frm.pack(fill="x", pady=(8, 0))
-        ttk.Button(btn_frm, text="👁 Results (Open3D)", style="Secondary.TButton",
-                    command=self._view_results_o3d).pack(side="left", padx=(0, 8))
-        ttk.Button(btn_frm, text="🔍 Results (ParaView)", style="Secondary.TButton",
-                    command=self._view_results).pack(side="left")
+        sm_grid = ttk.Frame(sm_card, style="Card.TFrame")
+        sm_grid.pack(fill="x")
 
-        # --- Summary Reports card ---
-        sum_card = self._make_card(outer, "Summary Reports")
+        ttk.Label(sm_grid, text="Smoothing radius (m):", style="Card.TLabel").grid(
+            row=0, column=0, sticky="w", pady=5)
+        self.var_sm_radius = tk.DoubleVar(value=self.cfg.get("SMOOTHING_RADIUS", 0.02))
+        ttk.Entry(sm_grid, textvariable=self.var_sm_radius, width=12).grid(
+            row=0, column=1, sticky="w", padx=(8, 0))
 
-        # Top row: smoothed checkbox + refresh + load buttons
-        sel_frm = ttk.Frame(sum_card, style="Card.TFrame")
-        sel_frm.pack(fill="x", pady=(0, 6))
-
-        self.var_csv_use_smoothed = tk.BooleanVar(value=True)
-        ttk.Checkbutton(sel_frm, text="Use smoothed if available",
-                         variable=self.var_csv_use_smoothed,
-                         style="Card.TCheckbutton").pack(side="left", padx=(0, 12))
-
-        ttk.Button(sel_frm, text="↻ Refresh", style="Secondary.TButton",
-                    command=self._refresh_csv_result_sets).pack(side="left", padx=(0, 4))
-        ttk.Button(sel_frm, text="📊 Load Selected", style="Secondary.TButton",
-                    command=self._load_summary_csv).pack(side="left", padx=4)
-
-        # Simulation selector (checkable listbox)
-        sim_lbl_frm = ttk.Frame(sum_card, style="Card.TFrame")
-        sim_lbl_frm.pack(fill="x")
-        ttk.Label(sim_lbl_frm, text="Simulations:",
-                  style="Card.TLabel").pack(side="left")
-        ttk.Button(sim_lbl_frm, text="All", style="Secondary.TButton",
-                    command=self._csv_select_all).pack(side="right", padx=2)
-        ttk.Button(sim_lbl_frm, text="None", style="Secondary.TButton",
-                    command=self._csv_select_none).pack(side="right", padx=2)
-
-        sim_list_frm = ttk.Frame(sum_card, style="Card.TFrame")
-        sim_list_frm.pack(fill="x", pady=(2, 6))
-        self._csv_sim_vars = {}  # name → BooleanVar
-        sim_canvas = tk.Canvas(sim_list_frm, height=80, borderwidth=0,
-                               highlightthickness=0, bg="white")
-        sim_sb = ttk.Scrollbar(sim_list_frm, orient="vertical",
-                                command=sim_canvas.yview)
-        self._csv_sim_inner = ttk.Frame(sim_canvas, style="Card.TFrame")
-        self._csv_sim_inner.bind(
-            "<Configure>",
-            lambda e: sim_canvas.configure(
-                scrollregion=sim_canvas.bbox("all")))
-        sim_canvas.create_window((0, 0), window=self._csv_sim_inner,
-                                  anchor="nw")
-        sim_canvas.configure(yscrollcommand=sim_sb.set)
-        sim_canvas.pack(side="left", fill="both", expand=True)
-        sim_sb.pack(side="right", fill="y")
-        self._csv_sim_canvas = sim_canvas
-
-        # Treeview for CSV data (shows first selected sim)
-        ttk.Label(sum_card, text="Table (first selected sim):",
-                  style="Card.TLabel").pack(anchor="w", pady=(2, 2))
-        csv_tree_frm = ttk.Frame(sum_card, style="Card.TFrame")
-        csv_tree_frm.pack(fill="both", expand=True)
-
-        csv_cols = ("object", "total_power", "peak_density", "source")
-        self.csv_tree = ttk.Treeview(csv_tree_frm, columns=csv_cols,
-                                      show="headings", height=8)
-        self.csv_tree.heading("object", text="Object")
-        self.csv_tree.heading("total_power", text="Total Power [W]")
-        self.csv_tree.heading("peak_density", text="Peak Density [W/m²]")
-        self.csv_tree.heading("source", text="Source")
-        self.csv_tree.column("object", width=160, anchor="w")
-        self.csv_tree.column("total_power", width=130, anchor="e")
-        self.csv_tree.column("peak_density", width=130, anchor="e")
-        self.csv_tree.column("source", width=70, anchor="center")
-
-        csv_vsb = ttk.Scrollbar(csv_tree_frm, orient="vertical",
-                                 command=self.csv_tree.yview)
-        self.csv_tree.configure(yscrollcommand=csv_vsb.set)
-        self.csv_tree.pack(side="left", fill="both", expand=True)
-        csv_vsb.pack(side="right", fill="y")
-
-        # Total power row
-        self.var_csv_total_power = tk.StringVar(value="")
-        ttk.Label(sum_card, textvariable=self.var_csv_total_power,
-                  style="Card.TLabel",
-                  font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(6, 0))
-
-        # Status / totals row
-        self.var_csv_status = tk.StringVar(
-            value="Refresh, select simulations, then click Load.")
-        ttk.Label(sum_card, textvariable=self.var_csv_status,
-                  style="Card.TLabel",
-                  foreground=self._colours["dim"]).pack(anchor="w", pady=(4, 0))
-
-        # ============================================================
-        # RIGHT side — component filter + matplotlib bar charts
-        # ============================================================
-        right_frm = ttk.Frame(top_pw, style="Card.TFrame", padding=8)
-        top_pw.add(right_frm, weight=1)
-
-        ttk.Label(right_frm, text="Comparison Charts",
-                  style="CardHeader.TLabel").pack(anchor="w", pady=(0, 4))
-
-        # Horizontal split: component list | plots
-        chart_pw = ttk.PanedWindow(right_frm, orient="horizontal")
-        chart_pw.pack(fill="both", expand=True)
-
-        # ---- Component filter (left of plots) ----
-        comp_frm = ttk.Frame(chart_pw, style="Card.TFrame")
-        chart_pw.add(comp_frm, weight=0)
-
-        comp_hdr = ttk.Frame(comp_frm, style="Card.TFrame")
-        comp_hdr.pack(fill="x", pady=(0, 2))
-        ttk.Label(comp_hdr, text="Components:",
-                  style="Card.TLabel").pack(anchor="w")
-        btn_row_comp = ttk.Frame(comp_frm, style="Card.TFrame")
-        btn_row_comp.pack(fill="x", pady=(0, 2))
-        ttk.Button(btn_row_comp, text="All", style="Secondary.TButton",
-                    command=self._chart_comp_select_all).pack(
-                        side="left", padx=(0, 2))
-        ttk.Button(btn_row_comp, text="None", style="Secondary.TButton",
-                    command=self._chart_comp_select_none).pack(
-                        side="left", padx=2)
-        ttk.Button(btn_row_comp, text="↻ Plot", style="Secondary.TButton",
-                    command=self._update_csv_bar_plots).pack(
-                        side="left", padx=2)
-
-        # Log-scale checkboxes
-        log_frm = ttk.Frame(comp_frm, style="Card.TFrame")
-        log_frm.pack(fill="x", pady=(2, 2))
-        self.var_chart_log_peak = tk.BooleanVar(value=False)
-        ttk.Checkbutton(log_frm, text="Log scale (peak)",
-                         variable=self.var_chart_log_peak,
-                         style="Card.TCheckbutton").pack(anchor="w")
-        self.var_chart_log_power = tk.BooleanVar(value=False)
-        ttk.Checkbutton(log_frm, text="Log scale (power)",
-                         variable=self.var_chart_log_power,
-                         style="Card.TCheckbutton").pack(anchor="w")
-
-        comp_list_frm = ttk.Frame(comp_frm, style="Card.TFrame")
-        comp_list_frm.pack(fill="both", expand=True, pady=(2, 0))
-        self._chart_comp_vars = {}  # object_name → BooleanVar
-        comp_canvas = tk.Canvas(comp_list_frm, width=220, borderwidth=0,
-                                highlightthickness=0, bg="white")
-        comp_sb = ttk.Scrollbar(comp_list_frm, orient="vertical",
-                                 command=comp_canvas.yview)
-        self._chart_comp_inner = ttk.Frame(comp_canvas, style="Card.TFrame")
-        self._chart_comp_inner.bind(
-            "<Configure>",
-            lambda e: comp_canvas.configure(
-                scrollregion=comp_canvas.bbox("all")))
-        comp_canvas.create_window((0, 0), window=self._chart_comp_inner,
-                                   anchor="nw")
-        comp_canvas.configure(yscrollcommand=comp_sb.set)
-        comp_canvas.pack(side="left", fill="both", expand=True)
-        comp_sb.pack(side="right", fill="y")
-
-        # ---- Plots (right of component list) ----
-        plot_frm = ttk.Frame(chart_pw, style="Card.TFrame")
-        chart_pw.add(plot_frm, weight=1)
-
-        self._csv_fig = Figure(figsize=(5, 6), dpi=100,
-                                facecolor="white", tight_layout=True)
-        self._csv_ax_peak = self._csv_fig.add_subplot(2, 1, 1)
-        self._csv_ax_power = self._csv_fig.add_subplot(2, 1, 2)
-        self._csv_canvas_mpl = FigureCanvasTkAgg(self._csv_fig, plot_frm)
-        self._csv_canvas_mpl.get_tk_widget().pack(fill="both", expand=True)
-
-        # Initialise empty chart labels
-        self._csv_ax_peak.set_title("Peak Heat Load [W/m²]", fontsize=10)
-        self._csv_ax_power.set_title("Total Power [W]", fontsize=10)
-        self._csv_fig.tight_layout()
-        self._csv_canvas_mpl.draw()
-
-        # Internal data store:  { sim_name: [{ name, tp, pd, source }, …] }
-        self._csv_plot_data = {}
-
-        # Populate the simulation checklist on build
-        self._refresh_csv_result_sets()
+        ttk.Label(sm_grid, text="Max cell area (m², empty=None):", style="Card.TLabel").grid(
+            row=1, column=0, sticky="w", pady=5)
+        mca = self.cfg.get("SMOOTHING_MAX_CELL_AREA")
+        self.var_sm_mca = tk.StringVar(value=str(mca) if mca is not None else "")
+        ttk.Entry(sm_grid, textvariable=self.var_sm_mca, width=12).grid(
+            row=1, column=1, sticky="w", padx=(8, 0))
 
     def _refresh_csv_result_sets(self):
         """Scan the output directory and populate the simulation check-list."""
@@ -1452,34 +1275,229 @@ class SimGUI(tk.Tk):
         self.wait_window(dlg)
 
     # ------------------------------------------------------------------
-    #  SMOOTHING tab
+    #  RESULTS tab (visualisation, summary reports, comparison charts)
     # ------------------------------------------------------------------
-    def _build_smoothing_tab(self, nb):
-        outer = ttk.Frame(nb)
-        nb.add(outer, text="  🔄  Smoothing  ")
+    def _build_results_tab(self, nb):
+        outer_wrapper = ttk.Frame(nb)
+        nb.add(outer_wrapper, text="  �  Results  ")
 
-        card = self._make_card(outer, "Post-Processing Smoother", pady=(12, 10))
+        top_pw = ttk.PanedWindow(outer_wrapper, orient="horizontal")
+        top_pw.pack(fill="both", expand=True)
 
-        self.var_smoother = tk.BooleanVar(value=self.cfg.get("RUN_SMOOTHER_AFTER_SIM", False))
-        ttk.Checkbutton(card, text="Run batch smoother after simulation",
-                         variable=self.var_smoother,
-                         style="Card.TCheckbutton").pack(anchor="w", pady=(0, 8))
+        # ============================================================
+        # LEFT side — scrollable cards
+        # ============================================================
+        left_wrapper = ttk.Frame(top_pw)
+        top_pw.add(left_wrapper, weight=1)
 
-        grid = ttk.Frame(card, style="Card.TFrame")
-        grid.pack(fill="x")
+        res_canvas = tk.Canvas(left_wrapper, borderwidth=0,
+                               highlightthickness=0,
+                               bg=self._colours["bg"])
+        res_vscroll = ttk.Scrollbar(left_wrapper, orient="vertical",
+                                     command=res_canvas.yview)
+        outer = ttk.Frame(res_canvas)
+        outer.bind("<Configure>",
+                   lambda e: res_canvas.configure(
+                       scrollregion=res_canvas.bbox("all")))
+        res_canvas.create_window((0, 0), window=outer, anchor="nw")
+        res_canvas.configure(yscrollcommand=res_vscroll.set)
+        res_canvas.pack(side="left", fill="both", expand=True)
+        res_vscroll.pack(side="right", fill="y")
+        # Mouse-wheel scrolling
+        def _on_mousewheel(event):
+            res_canvas.yview_scroll(-1 if event.num == 4 else 1, "units")
+        res_canvas.bind("<Button-4>", _on_mousewheel)
+        res_canvas.bind("<Button-5>", _on_mousewheel)
+        outer.bind("<Button-4>", _on_mousewheel)
+        outer.bind("<Button-5>", _on_mousewheel)
 
-        ttk.Label(grid, text="Smoothing radius (m):", style="Card.TLabel").grid(
-            row=0, column=0, sticky="w", pady=5)
-        self.var_sm_radius = tk.DoubleVar(value=self.cfg.get("SMOOTHING_RADIUS", 0.02))
-        ttk.Entry(grid, textvariable=self.var_sm_radius, width=12).grid(
-            row=0, column=1, sticky="w", padx=(8, 0))
+        # --- Visualisation card ---
+        vis_card = self._make_card(outer, "Visualisation", pady=(12, 10))
 
-        ttk.Label(grid, text="Max cell area (m², empty=None):", style="Card.TLabel").grid(
-            row=1, column=0, sticky="w", pady=5)
-        mca = self.cfg.get("SMOOTHING_MAX_CELL_AREA")
-        self.var_sm_mca = tk.StringVar(value=str(mca) if mca is not None else "")
-        ttk.Entry(grid, textvariable=self.var_sm_mca, width=12).grid(
-            row=1, column=1, sticky="w", padx=(8, 0))
+        vis_checks = [
+            ("ENABLE_VISUALIZATION", "Enable visualisation (master switch)"),
+        ]
+        for key, label in vis_checks:
+            v = tk.BooleanVar(value=self.cfg.get(key, False))
+            ttk.Checkbutton(vis_card, text=label, variable=v,
+                             style="Card.TCheckbutton").pack(anchor="w", pady=2)
+            setattr(self, f"var_{key}", v)
+
+        btn_frm = ttk.Frame(vis_card, style="Card.TFrame")
+        btn_frm.pack(fill="x", pady=(8, 0))
+        ttk.Button(btn_frm, text="👁 Results (Open3D)", style="Secondary.TButton",
+                    command=self._view_results_o3d).pack(side="left", padx=(0, 8))
+        ttk.Button(btn_frm, text="🔍 Results (ParaView)", style="Secondary.TButton",
+                    command=self._view_results).pack(side="left")
+
+        # --- Summary Reports card ---
+        sum_card = self._make_card(outer, "Summary Reports")
+
+        # Top row: smoothed checkbox + refresh + load buttons
+        sel_frm = ttk.Frame(sum_card, style="Card.TFrame")
+        sel_frm.pack(fill="x", pady=(0, 6))
+
+        self.var_csv_use_smoothed = tk.BooleanVar(value=True)
+        ttk.Checkbutton(sel_frm, text="Use smoothed if available",
+                         variable=self.var_csv_use_smoothed,
+                         style="Card.TCheckbutton").pack(side="left", padx=(0, 12))
+
+        ttk.Button(sel_frm, text="↻ Refresh", style="Secondary.TButton",
+                    command=self._refresh_csv_result_sets).pack(side="left", padx=(0, 4))
+        ttk.Button(sel_frm, text="📊 Load Selected", style="Secondary.TButton",
+                    command=self._load_summary_csv).pack(side="left", padx=4)
+
+        # Simulation selector (checkable listbox)
+        sim_lbl_frm = ttk.Frame(sum_card, style="Card.TFrame")
+        sim_lbl_frm.pack(fill="x")
+        ttk.Label(sim_lbl_frm, text="Simulations:",
+                  style="Card.TLabel").pack(side="left")
+        ttk.Button(sim_lbl_frm, text="All", style="Secondary.TButton",
+                    command=self._csv_select_all).pack(side="right", padx=2)
+        ttk.Button(sim_lbl_frm, text="None", style="Secondary.TButton",
+                    command=self._csv_select_none).pack(side="right", padx=2)
+
+        sim_list_frm = ttk.Frame(sum_card, style="Card.TFrame")
+        sim_list_frm.pack(fill="x", pady=(2, 6))
+        self._csv_sim_vars = {}  # name → BooleanVar
+        sim_canvas = tk.Canvas(sim_list_frm, height=80, borderwidth=0,
+                               highlightthickness=0, bg="white")
+        sim_sb = ttk.Scrollbar(sim_list_frm, orient="vertical",
+                                command=sim_canvas.yview)
+        self._csv_sim_inner = ttk.Frame(sim_canvas, style="Card.TFrame")
+        self._csv_sim_inner.bind(
+            "<Configure>",
+            lambda e: sim_canvas.configure(
+                scrollregion=sim_canvas.bbox("all")))
+        sim_canvas.create_window((0, 0), window=self._csv_sim_inner,
+                                  anchor="nw")
+        sim_canvas.configure(yscrollcommand=sim_sb.set)
+        sim_canvas.pack(side="left", fill="both", expand=True)
+        sim_sb.pack(side="right", fill="y")
+        self._csv_sim_canvas = sim_canvas
+
+        # Treeview for CSV data (shows first selected sim)
+        ttk.Label(sum_card, text="Table (first selected sim):",
+                  style="Card.TLabel").pack(anchor="w", pady=(2, 2))
+        csv_tree_frm = ttk.Frame(sum_card, style="Card.TFrame")
+        csv_tree_frm.pack(fill="both", expand=True)
+
+        csv_cols = ("object", "total_power", "peak_density", "source")
+        self.csv_tree = ttk.Treeview(csv_tree_frm, columns=csv_cols,
+                                      show="headings", height=8)
+        self.csv_tree.heading("object", text="Object")
+        self.csv_tree.heading("total_power", text="Total Power [W]")
+        self.csv_tree.heading("peak_density", text="Peak Density [W/m²]")
+        self.csv_tree.heading("source", text="Source")
+        self.csv_tree.column("object", width=160, anchor="w")
+        self.csv_tree.column("total_power", width=130, anchor="e")
+        self.csv_tree.column("peak_density", width=130, anchor="e")
+        self.csv_tree.column("source", width=70, anchor="center")
+
+        csv_vsb = ttk.Scrollbar(csv_tree_frm, orient="vertical",
+                                 command=self.csv_tree.yview)
+        self.csv_tree.configure(yscrollcommand=csv_vsb.set)
+        self.csv_tree.pack(side="left", fill="both", expand=True)
+        csv_vsb.pack(side="right", fill="y")
+
+        # Total power row
+        self.var_csv_total_power = tk.StringVar(value="")
+        ttk.Label(sum_card, textvariable=self.var_csv_total_power,
+                  style="Card.TLabel",
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(6, 0))
+
+        # Status / totals row
+        self.var_csv_status = tk.StringVar(
+            value="Refresh, select simulations, then click Load.")
+        ttk.Label(sum_card, textvariable=self.var_csv_status,
+                  style="Card.TLabel",
+                  foreground=self._colours["dim"]).pack(anchor="w", pady=(4, 0))
+
+        # ============================================================
+        # RIGHT side — component filter + matplotlib bar charts
+        # ============================================================
+        right_frm = ttk.Frame(top_pw, style="Card.TFrame", padding=8)
+        top_pw.add(right_frm, weight=1)
+
+        ttk.Label(right_frm, text="Comparison Charts",
+                  style="CardHeader.TLabel").pack(anchor="w", pady=(0, 4))
+
+        # Horizontal split: component list | plots
+        chart_pw = ttk.PanedWindow(right_frm, orient="horizontal")
+        chart_pw.pack(fill="both", expand=True)
+
+        # ---- Component filter (left of plots) ----
+        comp_frm = ttk.Frame(chart_pw, style="Card.TFrame")
+        chart_pw.add(comp_frm, weight=0)
+
+        comp_hdr = ttk.Frame(comp_frm, style="Card.TFrame")
+        comp_hdr.pack(fill="x", pady=(0, 2))
+        ttk.Label(comp_hdr, text="Components:",
+                  style="Card.TLabel").pack(anchor="w")
+        btn_row_comp = ttk.Frame(comp_frm, style="Card.TFrame")
+        btn_row_comp.pack(fill="x", pady=(0, 2))
+        ttk.Button(btn_row_comp, text="All", style="Secondary.TButton",
+                    command=self._chart_comp_select_all).pack(
+                        side="left", padx=(0, 2))
+        ttk.Button(btn_row_comp, text="None", style="Secondary.TButton",
+                    command=self._chart_comp_select_none).pack(
+                        side="left", padx=2)
+        ttk.Button(btn_row_comp, text="↻ Plot", style="Secondary.TButton",
+                    command=self._update_csv_bar_plots).pack(
+                        side="left", padx=2)
+
+        # Log-scale checkboxes
+        log_frm = ttk.Frame(comp_frm, style="Card.TFrame")
+        log_frm.pack(fill="x", pady=(2, 2))
+        self.var_chart_log_peak = tk.BooleanVar(value=False)
+        ttk.Checkbutton(log_frm, text="Log scale (peak)",
+                         variable=self.var_chart_log_peak,
+                         style="Card.TCheckbutton").pack(anchor="w")
+        self.var_chart_log_power = tk.BooleanVar(value=False)
+        ttk.Checkbutton(log_frm, text="Log scale (power)",
+                         variable=self.var_chart_log_power,
+                         style="Card.TCheckbutton").pack(anchor="w")
+
+        comp_list_frm = ttk.Frame(comp_frm, style="Card.TFrame")
+        comp_list_frm.pack(fill="both", expand=True, pady=(2, 0))
+        self._chart_comp_vars = {}  # object_name → BooleanVar
+        comp_canvas = tk.Canvas(comp_list_frm, width=220, borderwidth=0,
+                                highlightthickness=0, bg="white")
+        comp_sb = ttk.Scrollbar(comp_list_frm, orient="vertical",
+                                 command=comp_canvas.yview)
+        self._chart_comp_inner = ttk.Frame(comp_canvas, style="Card.TFrame")
+        self._chart_comp_inner.bind(
+            "<Configure>",
+            lambda e: comp_canvas.configure(
+                scrollregion=comp_canvas.bbox("all")))
+        comp_canvas.create_window((0, 0), window=self._chart_comp_inner,
+                                   anchor="nw")
+        comp_canvas.configure(yscrollcommand=comp_sb.set)
+        comp_canvas.pack(side="left", fill="both", expand=True)
+        comp_sb.pack(side="right", fill="y")
+
+        # ---- Plots (right of component list) ----
+        plot_frm = ttk.Frame(chart_pw, style="Card.TFrame")
+        chart_pw.add(plot_frm, weight=1)
+
+        self._csv_fig = Figure(figsize=(5, 6), dpi=100,
+                                facecolor="white", tight_layout=True)
+        self._csv_ax_peak = self._csv_fig.add_subplot(2, 1, 1)
+        self._csv_ax_power = self._csv_fig.add_subplot(2, 1, 2)
+        self._csv_canvas_mpl = FigureCanvasTkAgg(self._csv_fig, plot_frm)
+        self._csv_canvas_mpl.get_tk_widget().pack(fill="both", expand=True)
+
+        # Initialise empty chart labels
+        self._csv_ax_peak.set_title("Peak Heat Load [W/m²]", fontsize=10)
+        self._csv_ax_power.set_title("Total Power [W]", fontsize=10)
+        self._csv_fig.tight_layout()
+        self._csv_canvas_mpl.draw()
+
+        # Internal data store:  { sim_name: [{ name, tp, pd, source }, …] }
+        self._csv_plot_data = {}
+
+        # Populate the simulation checklist on build
+        self._refresh_csv_result_sets()
 
     # ------------------------------------------------------------------
     #  RUN tab (save, run, log)
@@ -1552,7 +1570,6 @@ class SimGUI(tk.Tk):
         d["SAVE_CSV_REPORTS"] = self.var_SAVE_CSV_REPORTS.get()
         d["ENABLE_VISUALIZATION"] = self.var_ENABLE_VISUALIZATION.get()
         d["SUMMARY_CSV_FILENAME"] = self.var_summary.get()
-        d["NUM_RAYS_TO_SHOW_IN_PLOT"] = self.var_nrays.get()
         d["RUN_SMOOTHER_AFTER_SIM"] = self.var_smoother.get()
         d["SMOOTHING_RADIUS"] = self.var_sm_radius.get()
         mca = self.var_sm_mca.get().strip()
@@ -1631,7 +1648,6 @@ class SimGUI(tk.Tk):
         self.var_SAVE_CSV_REPORTS.set(c.get("SAVE_CSV_REPORTS", False))
         self.var_ENABLE_VISUALIZATION.set(c.get("ENABLE_VISUALIZATION", True))
         self.var_summary.set(c.get("SUMMARY_CSV_FILENAME", "power_summary_by_object.csv"))
-        self.var_nrays.set(c.get("NUM_RAYS_TO_SHOW_IN_PLOT", 0))
         # Smoothing
         self.var_smoother.set(c.get("RUN_SMOOTHER_AFTER_SIM", False))
         self.var_sm_radius.set(c.get("SMOOTHING_RADIUS", 0.02))
