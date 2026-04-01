@@ -9,6 +9,7 @@ Launches ParaView externally for geometry and results viewing.
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
+import datetime
 import json
 import os
 import sys
@@ -1721,51 +1722,63 @@ class SimGUI(tk.Tk):
         self._set_status("Simulation running…")
 
         def _worker():
-            try:
-                if _IS_FROZEN:
-                    # Running from PyInstaller exe: stream output live via log_fn
-                    _run_simulation_frozen(log_fn=self._log)
-                    self._sim_process = None
-                    rc = 0
-                elif self.var_sdcc.get():
-                    # Wrap in srun: allocate an exclusive compute node,
-                    # run the simulation, then exit the srun shell.
-                    shell_cmd = (
-                        f'srun --exclusive --pty /bin/bash -c '
-                        f'"{_PYTHON} {_RUN_SIMULATION}"'
-                    )
-                    self._sim_process = subprocess.Popen(
-                        ["bash", "-l", "-c", shell_cmd],
-                        cwd=_SCRIPT_DIR,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1)
-                    for line in self._sim_process.stdout:
-                        self._log(line)
-                    self._sim_process.wait()
-                    rc = self._sim_process.returncode
-                else:
-                    self._sim_process = subprocess.Popen(
-                        [_PYTHON, _RUN_SIMULATION],
-                        cwd=_SCRIPT_DIR,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        bufsize=1)
-                    for line in self._sim_process.stdout:
-                        self._log(line)
-                    self._sim_process.wait()
-                    rc = self._sim_process.returncode
-                if rc == 0:
-                    self._log(f"\n✔ Simulation finished.\n")
-                    self.after(0, lambda: self._set_status("Simulation completed successfully"))
-                else:
-                    self._log(f"\n✖ Simulation exited with code {rc}.\n")
-                    self.after(0, lambda: self._set_status(f"Simulation failed (code {rc})"))
-            except Exception as e:
-                self._log(f"\n✖ Error: {e}\n")
-                self.after(0, lambda: self._set_status("Simulation error"))
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_dir = os.path.join(_SCRIPT_DIR, "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, f"simulation_{timestamp}.log")
+
+            with open(log_path, "w", encoding="utf-8") as _lf:
+                def _tee(text):
+                    self._log(text)
+                    _lf.write(text)
+                    _lf.flush()
+
+                _tee(f"Log file: {log_path}\n\n")
+                try:
+                    if _IS_FROZEN:
+                        # Running from PyInstaller exe: stream output live via log_fn
+                        _run_simulation_frozen(log_fn=_tee)
+                        self._sim_process = None
+                        rc = 0
+                    elif self.var_sdcc.get():
+                        # Wrap in srun: allocate an exclusive compute node,
+                        # run the simulation, then exit the srun shell.
+                        shell_cmd = (
+                            f'srun --exclusive --pty /bin/bash -c '
+                            f'"{_PYTHON} {_RUN_SIMULATION}"'
+                        )
+                        self._sim_process = subprocess.Popen(
+                            ["bash", "-l", "-c", shell_cmd],
+                            cwd=_SCRIPT_DIR,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            bufsize=1)
+                        for line in self._sim_process.stdout:
+                            _tee(line)
+                        self._sim_process.wait()
+                        rc = self._sim_process.returncode
+                    else:
+                        self._sim_process = subprocess.Popen(
+                            [_PYTHON, _RUN_SIMULATION],
+                            cwd=_SCRIPT_DIR,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            bufsize=1)
+                        for line in self._sim_process.stdout:
+                            _tee(line)
+                        self._sim_process.wait()
+                        rc = self._sim_process.returncode
+                    if rc == 0:
+                        _tee(f"\n✔ Simulation finished.\n")
+                        self.after(0, lambda: self._set_status("Simulation completed successfully"))
+                    else:
+                        _tee(f"\n✖ Simulation exited with code {rc}.\n")
+                        self.after(0, lambda: self._set_status(f"Simulation failed (code {rc})"))
+                except Exception as e:
+                    _tee(f"\n✖ Error: {e}\n")
+                    self.after(0, lambda: self._set_status("Simulation error"))
 
         threading.Thread(target=_worker, daemon=True).start()
 
