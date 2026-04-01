@@ -169,7 +169,7 @@ def run_setup_preview(grouped_meshes, view_mode):
     print("\nSetup preview finished.")
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Run a particle-mesh interaction simulation.", formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument(
         '--view-setup', nargs='?', const='full', default=None,
@@ -179,14 +179,14 @@ if __name__ == "__main__":
              "  'full': Show geometry and particle sources.\n"
              "  (default if flag is used with no value: 'full')")
     args = parser.parse_args()
-    
+
     # Load geometry ONCE, as it's shared by all runs.
     print("--- Loading shared geometry for all simulation runs... ---")
     grouped_geometry = geometry.load_scene(
         geometry_folders=config.GEOMETRY_FOLDERS,
         cache_dir=config.GEOMETRY_CACHE_DIR
     )
-    
+
     if args.view_setup:
         run_setup_preview(grouped_geometry, view_mode=args.view_setup)
     else:
@@ -194,19 +194,21 @@ if __name__ == "__main__":
         if config.PARTICLE_SOURCE_DIR:
             search_path = os.path.join(config.PARTICLE_SOURCE_DIR, '*.bl')
             beam_config_files = sorted(glob.glob(search_path))
-            
+
             if not beam_config_files:
                 print(f"Error: No .bl files found in the specified directory: '{config.PARTICLE_SOURCE_DIR}'")
             else:
                 print(f"\nFound {len(beam_config_files)} beam configurations to simulate.")
                 for beam_file in beam_config_files:
-                    # Create a unique subfolder name from the beam file's name
                     subfolder_name = os.path.splitext(os.path.basename(beam_file))[0]
-                    # Run the entire simulation for this one beam file
                     run_full_simulation(grouped_geometry, beam_file, subfolder_name)
         else:
             print("\nPARTICLE_SOURCE_DIR not specified. Attempting single fallback run...")
             if config.PARTICLE_SOURCES:
-                 run_full_simulation(grouped_geometry, None, "fallback_run")
+                run_full_simulation(grouped_geometry, None, "fallback_run")
             else:
-                 print("No particle sources defined for fallback run.")
+                print("No particle sources defined for fallback run.")
+
+
+if __name__ == "__main__":
+    main()

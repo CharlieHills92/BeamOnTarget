@@ -27,7 +27,9 @@ import viewer  # built-in Open3D viewer
 # ---------------------------------------------------------------------------
 # Resolve paths
 # ---------------------------------------------------------------------------
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_IS_FROZEN = getattr(sys, 'frozen', False)  # True when running from PyInstaller exe
+_SCRIPT_DIR = (os.path.dirname(sys.executable) if _IS_FROZEN
+               else os.path.dirname(os.path.abspath(__file__)))
 _CONFIG_JSON = os.path.join(_SCRIPT_DIR, "config.json")
 _RUN_SIMULATION = os.path.join(_SCRIPT_DIR, "run_simulation.py")
 _PYTHON = sys.executable  # the same Python that launched the GUI
@@ -36,6 +38,11 @@ _PYTHON = sys.executable  # the same Python that launched the GUI
 # ===================================================================
 #  Helper: load / save JSON directly (no import config, to stay clean)
 # ===================================================================
+def _resolve_path(relative_path):
+    """Resolve a simulation-file path relative to the main application folder."""
+    return os.path.join(_SCRIPT_DIR, relative_path)
+
+
 def load_config():
     with open(_CONFIG_JSON, "r") as f:
         return json.load(f)
@@ -43,6 +50,49 @@ def load_config():
 def save_config(data):
     with open(_CONFIG_JSON, "w") as f:
         json.dump(data, f, indent=4)
+
+
+# ===================================================================
+#  Simulation runner for frozen (PyInstaller) mode
+# ===================================================================
+class _SimulationStream:
+    """Capture stdout/stderr and yield lines for the GUI logger."""
+    def __init__(self):
+        self.lines = []
+
+    def write(self, msg):
+        if msg:
+            self.lines.append(msg)
+
+    def flush(self):
+        pass
+
+
+def _run_simulation_frozen():
+    """Run the bundled run_simulation module directly when frozen."""
+    import io
+
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    old_cwd = os.getcwd()
+
+    capture = io.StringIO()
+    sys.stdout = capture
+    sys.stderr = capture
+
+    try:
+        # Set cwd to the exe's folder so relative paths in config resolve correctly
+        os.chdir(_SCRIPT_DIR)
+        import run_simulation
+        run_simulation.main()
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        os.chdir(old_cwd)
+        output = capture.getvalue()
+        capture.close()
+
+    return output
 
 
 # ===================================================================
@@ -66,7 +116,7 @@ def _pv_geometry_script(cfg):
     ci = 0
     for folder, settings in folders.items():
         scale = settings.get("scale", 1)
-        folder_abs = os.path.join(_SCRIPT_DIR, folder)
+        folder_abs = _resolve_path(folder)
         if not os.path.isdir(folder_abs):
             continue
         stl_files = sorted(glob.glob(os.path.join(folder_abs, "*.stl")) +
@@ -740,7 +790,7 @@ class SimGUI(tk.Tk):
     def _refresh_bl_list(self):
         self.bl_listbox.delete(0, "end")
         src = self.var_src_dir.get()
-        src_abs = os.path.join(_SCRIPT_DIR, src) if not os.path.isabs(src) else src
+        src_abs = _resolve_path(src) if not os.path.isabs(src) else src
         bl_files = sorted(glob.glob(os.path.join(src_abs, "*.bl")))
         for f in bl_files:
             self.bl_listbox.insert("end", os.path.basename(f))
@@ -829,7 +879,7 @@ class SimGUI(tk.Tk):
     def _refresh_csv_result_sets(self):
         """Scan the output directory and populate the simulation check-list."""
         outdir = self.var_outdir.get()
-        outdir_abs = (os.path.join(_SCRIPT_DIR, outdir)
+        outdir_abs = (_resolve_path(outdir)
                       if not os.path.isabs(outdir) else outdir)
         sets = []
         if os.path.isdir(outdir_abs):
@@ -945,7 +995,7 @@ class SimGUI(tk.Tk):
             return
 
         outdir = self.var_outdir.get()
-        outdir_abs = (os.path.join(_SCRIPT_DIR, outdir)
+        outdir_abs = (_resolve_path(outdir)
                       if not os.path.isabs(outdir) else outdir)
 
         # --- helper: find first existing CSV from a list of candidates ---
@@ -1244,7 +1294,7 @@ class SimGUI(tk.Tk):
 
     def _view_results(self):
         outdir = self.var_outdir.get()
-        outdir_abs = os.path.join(_SCRIPT_DIR, outdir) if not os.path.isabs(outdir) else outdir
+        outdir_abs = _resolve_path(outdir) if not os.path.isabs(outdir) else outdir
         if not os.path.isdir(outdir_abs):
             messagebox.showwarning("No results", f"Output directory not found:\n{outdir_abs}")
             return
@@ -1269,7 +1319,7 @@ class SimGUI(tk.Tk):
     def _open_extract_dialog(self):
         """Open the VTP data extraction dialog."""
         outdir = self.var_outdir.get()
-        outdir_abs = (os.path.join(_SCRIPT_DIR, outdir)
+        outdir_abs = (_resolve_path(outdir)
                       if not os.path.isabs(outdir) else outdir)
         dlg = _ExtractDialog(self, outdir_abs)
         self.wait_window(dlg)
@@ -1673,7 +1723,15 @@ class SimGUI(tk.Tk):
 
         def _worker():
             try:
-                if self.var_sdcc.get():
+                if _IS_FROZEN:
+                    # Running from PyInstaller exe: run directly in process
+                    output = _run_simulation_frozen()
+                    for line in output.split('\n'):
+                        if line:
+                            self._log(line + '\n')
+                    self._sim_process = None
+                    rc = 0
+                elif self.var_sdcc.get():
                     # Wrap in srun: allocate an exclusive compute node,
                     # run the simulation, then exit the srun shell.
                     shell_cmd = (
@@ -1687,6 +1745,10 @@ class SimGUI(tk.Tk):
                         stderr=subprocess.STDOUT,
                         text=True,
                         bufsize=1)
+                    for line in self._sim_process.stdout:
+                        self._log(line)
+                    self._sim_process.wait()
+                    rc = self._sim_process.returncode
                 else:
                     self._sim_process = subprocess.Popen(
                         [_PYTHON, _RUN_SIMULATION],
@@ -1695,10 +1757,10 @@ class SimGUI(tk.Tk):
                         stderr=subprocess.STDOUT,
                         text=True,
                         bufsize=1)
-                for line in self._sim_process.stdout:
-                    self._log(line)
-                self._sim_process.wait()
-                rc = self._sim_process.returncode
+                    for line in self._sim_process.stdout:
+                        self._log(line)
+                    self._sim_process.wait()
+                    rc = self._sim_process.returncode
                 if rc == 0:
                     self._log(f"\n✔ Simulation finished.\n")
                     self.after(0, lambda: self._set_status("Simulation completed successfully"))

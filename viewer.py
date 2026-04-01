@@ -25,6 +25,12 @@ import pyvista as pv
 import tkinter as tk
 from PIL import Image, ImageTk, ImageDraw
 
+
+def _resolve_viewer_path(script_dir, relative_path):
+    """Resolve a simulation-file path relative to the main application folder."""
+    return os.path.join(script_dir, relative_path)
+
+
 # ---------------------------------------------------------------------------
 #  Colour palette for geometry folders
 # ---------------------------------------------------------------------------
@@ -948,7 +954,7 @@ def _load_selected_geometry(script_dir, geometry_folders, selected_folders):
             continue
         settings = geometry_folders[folder]
         scale = settings.get("scale", 1)
-        folder_abs = os.path.join(script_dir, folder)
+        folder_abs = _resolve_viewer_path(script_dir, folder)
         if not os.path.isdir(folder_abs):
             continue
         for stl_path in sorted(
@@ -1152,7 +1158,7 @@ def _pick_sources_dialog(parent, script_dir, source_dir, geometry_folders):
     """
     from tkinter import ttk
 
-    src_abs = (os.path.join(script_dir, source_dir)
+    src_abs = (_resolve_viewer_path(script_dir, source_dir)
                if not os.path.isabs(source_dir) else source_dir)
 
     dlg = tk.Toplevel(parent)
@@ -1514,7 +1520,7 @@ def view_geometry(parent, script_dir, geometry_folders, source_dir=None):
     """Geometry viewer — persistent selection dialog → Open3D window."""
     src_abs = None
     if source_dir:
-        src_abs = (os.path.join(script_dir, source_dir)
+        src_abs = (_resolve_viewer_path(script_dir, source_dir)
                    if not os.path.isabs(source_dir) else source_dir)
     cache = _MeshCache(script_dir, geometry_folders)
 
@@ -1550,7 +1556,7 @@ def view_results(parent, script_dir, output_dir, geometry_folders=None,
     geometry_folders = geometry_folders or {}
     src_abs = None
     if source_dir:
-        src_abs = (os.path.join(script_dir, source_dir)
+        src_abs = (_resolve_viewer_path(script_dir, source_dir)
                    if not os.path.isabs(source_dir) else source_dir)
     cache = _MeshCache(script_dir, geometry_folders)
 
@@ -1589,7 +1595,7 @@ def view_all(parent, script_dir, output_dir, geometry_folders,
                   if not os.path.isabs(output_dir) else output_dir)
     src_abs = None
     if source_dir:
-        src_abs = (os.path.join(script_dir, source_dir)
+        src_abs = (_resolve_viewer_path(script_dir, source_dir)
                    if not os.path.isabs(source_dir) else source_dir)
     cache = _MeshCache(script_dir, geometry_folders)
 

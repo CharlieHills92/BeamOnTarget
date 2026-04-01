@@ -11,12 +11,14 @@ The JSON file can be edited by hand or via the GUI (sim_gui.py).
 import json
 import math
 import os
+import sys
 import numpy as np
 
 # ---------------------------------------------------------------------------
 # Path to the JSON configuration file (next to this script by default)
 # ---------------------------------------------------------------------------
-_CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
+_CONFIG_DIR = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
+               else os.path.dirname(os.path.abspath(__file__)))
 _CONFIG_FILE = os.path.join(_CONFIG_DIR, "config.json")
 
 # ---------------------------------------------------------------------------
