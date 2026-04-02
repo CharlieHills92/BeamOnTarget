@@ -37,6 +37,13 @@ def load_config(path=None):
     return _load_json(path)
 
 
+def apply_config(path=None, data=None):
+    """Apply config values to module-level globals from a path or dict."""
+    if data is None:
+        data = _load_json(path)
+    _apply(data)
+
+
 def save_config(data=None, path=None):
     """Write the current (or given) config dict back to JSON."""
     path = path or _CONFIG_FILE

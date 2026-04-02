@@ -10,12 +10,12 @@ Launches ParaView externally for geometry and results viewing.
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 import datetime
-import json
 import os
 import sys
 import subprocess
 import glob
 import threading
+import shlex
 
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend; we blit to Tk canvases
@@ -35,6 +35,7 @@ _SCRIPT_DIR = (os.path.dirname(sys.executable) if _IS_FROZEN
                else os.path.dirname(os.path.abspath(__file__)))
 _CONFIG_JSON = os.path.join(_SCRIPT_DIR, "config.json")
 _RUN_SIMULATION = os.path.join(_SCRIPT_DIR, "run_simulation.py")
+_RUN_SMOOTHING = os.path.join(_SCRIPT_DIR, "smooth_results.py")
 _PYTHON = sys.executable  # the same Python that launched the GUI
 _SPLASH_LOGO = os.path.join(_SCRIPT_DIR, "BOT_logo.png")
 _APP_ICON_BMP = os.path.join(_SCRIPT_DIR, "BOT_icon.bmp")
@@ -64,8 +65,10 @@ class _SimulationStream:
         pass
 
 
-def _run_simulation_frozen(log_fn=None):
-    """Run the bundled run_simulation module directly when frozen."""
+def _run_module_frozen(module_name, argv=None, log_fn=None):
+    """Run a bundled module main(argv) directly when frozen."""
+    argv = argv or []
+
     class _LiveStream:
         def write(self, text):
             if text and log_fn:
@@ -82,8 +85,8 @@ def _run_simulation_frozen(log_fn=None):
 
     try:
         os.chdir(_SCRIPT_DIR)
-        import run_simulation
-        run_simulation.main()
+        module = __import__(module_name)
+        module.main(argv)
     finally:
         sys.stdout = old_stdout
         sys.stderr = old_stderr
@@ -224,6 +227,9 @@ class SimGUI(tk.Tk):
         self._icon_photo = None
         self._splash_logo_photo = None
         self._splash = None
+        self._active_config_path = _CONFIG_JSON
+        self._queued_config_paths = []
+        self._stop_requested = False
 
         self.withdraw()
         self._set_app_icon()
@@ -232,7 +238,7 @@ class SimGUI(tk.Tk):
         self.title("BeamOnTarget — Simulation Manager")
         self.geometry("1000x760")
         self.minsize(860, 640)
-        self.cfg = load_config()
+        self.cfg = load_config(self._active_config_path)
         self._apply_theme()
         self._build_ui()
         self._build_statusbar()
@@ -421,11 +427,35 @@ class SimGUI(tk.Tk):
     #  Status bar
     # ------------------------------------------------------------------
     def _build_statusbar(self):
-        self._statusbar = ttk.Label(self, text="  Ready", style="Status.TLabel")
-        self._statusbar.pack(side="bottom", fill="x")
+        bottom = ttk.Frame(self, style="TFrame")
+        bottom.pack(side="bottom", fill="x")
+
+        cfg_row = ttk.Frame(bottom, style="TFrame")
+        cfg_row.pack(fill="x", padx=8, pady=(4, 0))
+        ttk.Label(cfg_row, text="Configuration file:", style="TLabel").pack(side="left")
+        self.var_config_file = tk.StringVar(value=self._active_config_path)
+        ttk.Entry(cfg_row, textvariable=self.var_config_file, state="readonly").pack(
+            side="left", fill="x", expand=True, padx=(8, 4))
+        ttk.Button(cfg_row, text="Browse...", style="Secondary.TButton",
+                   command=self._browse_active_config).pack(side="left")
+
+        self._statusbar = ttk.Label(bottom, text="  Ready", style="Status.TLabel")
+        self._statusbar.pack(fill="x", pady=(4, 0))
 
     def _set_status(self, text):
         self._statusbar.config(text=f"  {text}")
+
+    def _set_active_config_path(self, path):
+        self._active_config_path = os.path.abspath(path)
+        self.var_config_file.set(self._active_config_path)
+
+    def _browse_active_config(self):
+        path = filedialog.askopenfilename(
+            initialdir=os.path.dirname(self._active_config_path),
+            title="Select configuration file",
+            filetypes=[("JSON files", "*.json"), ("All files", "*")])
+        if path:
+            self._load_config_from_path(path)
 
     # ------------------------------------------------------------------
     #  Build the tabbed interface
@@ -496,20 +526,6 @@ class SimGUI(tk.Tk):
         self.var_cpu = tk.IntVar(value=self.cfg.get("NUM_CPU_CORES", 1))
         ttk.Spinbox(card, from_=-1, to=256, textvariable=self.var_cpu,
                      width=8).grid(row=row, column=1, sticky="w", padx=(8, 0))
-
-        row += 1
-        ttk.Label(card, text="Deposition fraction (0–1):", style="Card.TLabel").grid(
-            row=row, column=0, sticky="w", pady=5)
-        self.var_dep_frac = tk.DoubleVar(value=self.cfg.get("DEPOSITION_FRACTION", 1.0))
-        ttk.Entry(card, textvariable=self.var_dep_frac, width=10).grid(
-            row=row, column=1, sticky="w", padx=(8, 0))
-
-        row += 1
-        self.var_diag = tk.BooleanVar(value=self.cfg.get("ENABLE_DIAGNOSTIC_SURFACES", False))
-        ttk.Checkbutton(card, text="Enable diagnostic (transparent) surfaces",
-                         variable=self.var_diag,
-                         style="Card.TCheckbutton").grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=5)
 
         row += 1
         ttk.Label(card, text="Geometry cache dir:", style="Card.TLabel").grid(
@@ -1619,6 +1635,8 @@ class SimGUI(tk.Tk):
 
         ttk.Button(btn_row, text="▶  Run Simulation", style="Accent.TButton",
                     command=self._run_sim).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="≈  Run Smoothing Only", style="Secondary.TButton",
+                command=self._run_smoothing_only).pack(side="left", padx=4)
         ttk.Button(btn_row, text="⏹  Stop", style="Danger.TButton",
                     command=self._stop_sim).pack(side="left", padx=4)
 
@@ -1628,6 +1646,23 @@ class SimGUI(tk.Tk):
             ttk.Checkbutton(btn_card, text="Run on SLURM server (srun --exclusive)",
                              variable=self.var_sdcc,
                              style="Card.TCheckbutton").pack(anchor="w", pady=(8, 0))
+
+        queue_card = self._make_card(outer, "Configuration Queue", pady=(6, 6))
+        self.run_cfg_listbox = tk.Listbox(
+            queue_card, height=6, font=("Segoe UI", 10),
+            bg="white", fg=self._colours["fg"],
+            selectbackground=self._colours["accent"],
+            selectforeground="white", highlightthickness=0, bd=1, relief="solid")
+        self.run_cfg_listbox.pack(fill="both", expand=False, pady=(0, 6))
+
+        queue_btns = ttk.Frame(queue_card, style="Card.TFrame")
+        queue_btns.pack(fill="x")
+        ttk.Button(queue_btns, text="Add...", style="Secondary.TButton",
+                    command=self._add_run_config).pack(side="left")
+        ttk.Button(queue_btns, text="Delete", style="Secondary.TButton",
+                    command=self._remove_run_config).pack(side="left", padx=(4, 0))
+        ttk.Button(queue_btns, text="Use Active Config", style="Secondary.TButton",
+                    command=self._add_active_config_to_queue).pack(side="left", padx=(8, 0))
 
         # --- Log output ---
         log_card = self._make_card(outer, "Console Output", pady=(6, 10))
@@ -1645,12 +1680,58 @@ class SimGUI(tk.Tk):
     # ------------------------------------------------------------------
     #  Collect GUI → dict
     # ------------------------------------------------------------------
+    def _add_run_config(self):
+        path = filedialog.askopenfilename(
+            initialdir=os.path.dirname(self._active_config_path),
+            title="Add configuration file",
+            filetypes=[("JSON files", "*.json"), ("All files", "*")])
+        if not path:
+            return
+        path = os.path.abspath(path)
+        if path not in self._queued_config_paths:
+            self._queued_config_paths.append(path)
+            self._refresh_run_config_listbox()
+
+    def _add_active_config_to_queue(self):
+        path = os.path.abspath(self._active_config_path)
+        if path not in self._queued_config_paths:
+            self._queued_config_paths.append(path)
+            self._refresh_run_config_listbox()
+
+    def _remove_run_config(self):
+        sel = list(self.run_cfg_listbox.curselection())
+        if not sel:
+            return
+        for idx in reversed(sel):
+            del self._queued_config_paths[idx]
+        self._refresh_run_config_listbox()
+
+    def _refresh_run_config_listbox(self):
+        self.run_cfg_listbox.delete(0, "end")
+        for p in self._queued_config_paths:
+            self.run_cfg_listbox.insert("end", p)
+
+    def _get_execution_config_paths(self):
+        if self._queued_config_paths:
+            return list(self._queued_config_paths)
+        return [os.path.abspath(self._active_config_path)]
+
+    def _load_config_from_path(self, path):
+        try:
+            path = os.path.abspath(path)
+            new_cfg = load_config(path)
+            self.cfg = new_cfg
+            self._set_active_config_path(path)
+            self._refresh_all_from_cfg()
+            self._log(f"✔ Configuration loaded from {os.path.basename(path)}\n")
+            self._set_status(f"Loaded config: {os.path.basename(path)}")
+        except Exception as e:
+            messagebox.showerror("Load Error", str(e))
+
     def _collect(self):
         d = dict(self.cfg)  # start from current (preserves unknown keys)
         d["NUM_CPU_CORES"] = self.var_cpu.get()
-        d["ENABLE_DIAGNOSTIC_SURFACES"] = self.var_diag.get()
         d["GEOMETRY_CACHE_DIR"] = self.var_cache.get()
-        d["DEPOSITION_FRACTION"] = self.var_dep_frac.get()
         d["PARAVIEW_PATH"] = self.var_pv_path.get()
         d["PARAVIEW_MODULE"] = self.var_pv_module.get()
         # Geometry table is already updated in self.cfg via dialog
@@ -1678,8 +1759,8 @@ class SimGUI(tk.Tk):
     def _save(self):
         try:
             self.cfg = self._collect()
-            save_config(self.cfg)
-            self._log("✔ Configuration saved to config.json\n")
+            save_config(self.cfg, self._active_config_path)
+            self._log(f"✔ Configuration saved to {os.path.basename(self._active_config_path)}\n")
             self._set_status("Configuration saved")
         except Exception as e:
             messagebox.showerror("Save Error", str(e))
@@ -1687,7 +1768,7 @@ class SimGUI(tk.Tk):
     def _save_as(self):
         """Save the current config to a user-chosen JSON file."""
         path = filedialog.asksaveasfilename(
-            initialdir=_SCRIPT_DIR,
+            initialdir=os.path.dirname(self._active_config_path),
             title="Save Config As",
             defaultextension=".json",
             filetypes=[("JSON files", "*.json"), ("All files", "*")])
@@ -1695,8 +1776,9 @@ class SimGUI(tk.Tk):
             return
         try:
             self.cfg = self._collect()
-            with open(path, "w") as f:
-                json.dump(self.cfg, f, indent=4)
+            path = os.path.abspath(path)
+            save_config(self.cfg, path)
+            self._set_active_config_path(path)
             self._log(f"✔ Configuration saved to {os.path.basename(path)}\n")
         except Exception as e:
             messagebox.showerror("Save Error", str(e))
@@ -1704,28 +1786,19 @@ class SimGUI(tk.Tk):
     def _load_config_file(self):
         """Load a config from a user-chosen JSON file and refresh the GUI."""
         path = filedialog.askopenfilename(
-            initialdir=_SCRIPT_DIR,
+            initialdir=os.path.dirname(self._active_config_path),
             title="Load Config",
             filetypes=[("JSON files", "*.json"), ("All files", "*")])
         if not path:
             return
-        try:
-            with open(path, "r") as f:
-                new_cfg = json.load(f)
-            self.cfg = new_cfg
-            self._refresh_all_from_cfg()
-            self._log(f"✔ Configuration loaded from {os.path.basename(path)}\n")
-        except Exception as e:
-            messagebox.showerror("Load Error", str(e))
+        self._load_config_from_path(path)
 
     def _refresh_all_from_cfg(self):
         """Push self.cfg values back into every GUI widget."""
         c = self.cfg
         # General
         self.var_cpu.set(c.get("NUM_CPU_CORES", 1))
-        self.var_diag.set(c.get("ENABLE_DIAGNOSTIC_SURFACES", False))
         self.var_cache.set(c.get("GEOMETRY_CACHE_DIR", "geometry_cache"))
-        self.var_dep_frac.set(c.get("DEPOSITION_FRACTION", 1.0))
         self.var_pv_path.set(c.get("PARAVIEW_PATH", "paraview"))
         self.var_pv_module.set(c.get("PARAVIEW_MODULE", "ParaView"))
         # Geometry table
@@ -1754,24 +1827,33 @@ class SimGUI(tk.Tk):
     #  Run simulation in background thread
     # ------------------------------------------------------------------
     def _run_sim(self):
+        self._run_jobs(mode="simulation")
+
+    def _run_smoothing_only(self):
+        self._run_jobs(mode="smoothing")
+
+    def _run_jobs(self, mode="simulation"):
         if self._sim_process and self._sim_process.poll() is None:
             messagebox.showinfo("Running", "A simulation is already running.")
             return
 
         # Save first
         self._save()
+        self._stop_requested = False
+        cfg_paths = self._get_execution_config_paths()
 
         self.log_text.config(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.config(state="disabled")
-        self._log("▶ Starting simulation…\n\n")
-        self._set_status("Simulation running…")
+        mode_label = "simulation" if mode == "simulation" else "smoothing"
+        self._log(f"▶ Starting {mode_label} queue with {len(cfg_paths)} configuration file(s)…\n\n")
+        self._set_status(f"{mode_label.capitalize()} queue running…")
 
         def _worker():
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             log_dir = os.path.join(_SCRIPT_DIR, "logs")
             os.makedirs(log_dir, exist_ok=True)
-            log_path = os.path.join(log_dir, f"simulation_{timestamp}.log")
+            log_path = os.path.join(log_dir, f"{mode_label}_{timestamp}.log")
 
             with open(log_path, "w", encoding="utf-8") as _lf:
                 def _tee(text):
@@ -1780,55 +1862,82 @@ class SimGUI(tk.Tk):
                     _lf.flush()
 
                 _tee(f"Log file: {log_path}\n\n")
+                successes = 0
+                failures = 0
                 try:
-                    if _IS_FROZEN:
-                        # Running from PyInstaller exe: stream output live via log_fn
-                        _run_simulation_frozen(log_fn=_tee)
-                        self._sim_process = None
-                        rc = 0
-                    elif self.var_sdcc.get():
-                        # Wrap in srun: allocate an exclusive compute node,
-                        # run the simulation, then exit the srun shell.
-                        shell_cmd = (
-                            f'srun --exclusive --pty /bin/bash -c '
-                            f'"{_PYTHON} {_RUN_SIMULATION}"'
-                        )
-                        self._sim_process = subprocess.Popen(
-                            ["bash", "-l", "-c", shell_cmd],
-                            cwd=_SCRIPT_DIR,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            bufsize=1)
-                        for line in self._sim_process.stdout:
-                            _tee(line)
-                        self._sim_process.wait()
-                        rc = self._sim_process.returncode
-                    else:
-                        self._sim_process = subprocess.Popen(
-                            [_PYTHON, _RUN_SIMULATION],
-                            cwd=_SCRIPT_DIR,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            bufsize=1)
-                        for line in self._sim_process.stdout:
-                            _tee(line)
-                        self._sim_process.wait()
-                        rc = self._sim_process.returncode
-                    if rc == 0:
-                        _tee(f"\n✔ Simulation finished.\n")
-                        self.after(0, lambda: self._set_status("Simulation completed successfully"))
-                    else:
-                        _tee(f"\n✖ Simulation exited with code {rc}.\n")
-                        self.after(0, lambda: self._set_status(f"Simulation failed (code {rc})"))
+                    for idx, cfg_path in enumerate(cfg_paths, 1):
+                        if self._stop_requested:
+                            break
+                        _tee(f"\n=== [{idx}/{len(cfg_paths)}] {mode_label.capitalize()} for {cfg_path} ===\n")
+                        rc = self._run_single_job(mode, cfg_path, _tee)
+                        if rc == 0:
+                            successes += 1
+                            _tee("✔ Completed successfully.\n")
+                        else:
+                            failures += 1
+                            _tee(f"✖ Failed with return code {rc}.\n")
                 except Exception as e:
                     _tee(f"\n✖ Error: {e}\n")
-                    self.after(0, lambda: self._set_status("Simulation error"))
+                    self.after(0, lambda: self._set_status(f"{mode_label.capitalize()} error"))
+                    return
+
+                if self._stop_requested:
+                    self.after(0, lambda: self._set_status(f"{mode_label.capitalize()} queue stopped"))
+                    _tee("\n⏹ Queue stopped by user.\n")
+                elif failures == 0:
+                    self.after(0, lambda: self._set_status(f"{mode_label.capitalize()} queue completed successfully"))
+                    _tee(f"\n✔ Queue complete: {successes} succeeded, {failures} failed.\n")
+                else:
+                    self.after(0, lambda: self._set_status(f"{mode_label.capitalize()} queue completed with failures"))
+                    _tee(f"\n✖ Queue complete: {successes} succeeded, {failures} failed.\n")
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _run_single_job(self, mode, cfg_path, log_fn):
+        cfg_path = os.path.abspath(cfg_path)
+        if mode == "simulation":
+            script = _RUN_SIMULATION
+            argv = ["-i", cfg_path]
+        else:
+            script = _RUN_SMOOTHING
+            argv = ["-i", cfg_path, "-r", str(self.var_sm_radius.get())]
+            max_area_txt = self.var_sm_mca.get().strip()
+            if max_area_txt:
+                argv += ["-a", max_area_txt]
+
+        if _IS_FROZEN:
+            module_name = "run_simulation" if mode == "simulation" else "smooth_results"
+            _run_module_frozen(module_name, argv=argv, log_fn=log_fn)
+            self._sim_process = None
+            return 0
+
+        if mode == "simulation" and sys.platform != "win32" and self.var_sdcc.get():
+            py_cmd = f"{shlex.quote(_PYTHON)} {shlex.quote(script)} " + " ".join(shlex.quote(a) for a in argv)
+            shell_cmd = f'srun --exclusive --pty /bin/bash -c "{py_cmd}"'
+            cmd = ["bash", "-l", "-c", shell_cmd]
+        else:
+            cmd = [_PYTHON, script] + argv
+
+        self._sim_process = subprocess.Popen(
+            cmd,
+            cwd=_SCRIPT_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1)
+        for line in self._sim_process.stdout:
+            log_fn(line)
+            if self._stop_requested:
+                break
+        if self._stop_requested and self._sim_process.poll() is None:
+            self._sim_process.terminate()
+        self._sim_process.wait()
+        rc = self._sim_process.returncode
+        self._sim_process = None
+        return rc
+
     def _stop_sim(self):
+        self._stop_requested = True
         if self._sim_process and self._sim_process.poll() is None:
             self._sim_process.terminate()
             self._log("\n⏹ Simulation terminated by user.\n")

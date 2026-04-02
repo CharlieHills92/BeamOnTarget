@@ -23,6 +23,30 @@ import output
 import batch_smoother # <-- NEW: Import the batch smoother script
 import generate_report
 
+
+def _resolve_config_relative_paths(config_path):
+    """Resolve path-like config entries relative to the selected config file."""
+    if not config_path:
+        return
+
+    base_dir = os.path.dirname(os.path.abspath(config_path))
+
+    def _abs_if_relative(path_value):
+        if not path_value:
+            return path_value
+        if os.path.isabs(path_value):
+            return path_value
+        return os.path.abspath(os.path.join(base_dir, path_value))
+
+    config.GEOMETRY_CACHE_DIR = _abs_if_relative(config.GEOMETRY_CACHE_DIR)
+    config.PARTICLE_SOURCE_DIR = _abs_if_relative(config.PARTICLE_SOURCE_DIR)
+    config.DETAILED_OUTPUT_DIR = _abs_if_relative(config.DETAILED_OUTPUT_DIR)
+
+    resolved_folders = {}
+    for folder, settings in config.GEOMETRY_FOLDERS.items():
+        resolved_folders[_abs_if_relative(folder)] = settings
+    config.GEOMETRY_FOLDERS = resolved_folders
+
 def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
     """
     The main simulation workflow for a SINGLE run.
@@ -169,8 +193,12 @@ def run_setup_preview(grouped_meshes, view_mode):
     print("\nSetup preview finished.")
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Run a particle-mesh interaction simulation.", formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument(
+        '-i', '--input-config',
+        default=None,
+        help="Path to a JSON configuration file. Defaults to config.json.")
     parser.add_argument(
         '--view-setup', nargs='?', const='full', default=None,
         choices=['geo', 'full'],
@@ -178,7 +206,16 @@ def main():
              "  'geo': Show geometry only.\n"
              "  'full': Show geometry and particle sources.\n"
              "  (default if flag is used with no value: 'full')")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    if args.input_config:
+        cfg_path = os.path.abspath(args.input_config)
+        if not os.path.isfile(cfg_path):
+            print(f"FATAL ERROR: Config file not found: '{cfg_path}'")
+            return
+        config.apply_config(path=cfg_path)
+        _resolve_config_relative_paths(cfg_path)
+        print(f"Using configuration file: {cfg_path}")
 
     # Load geometry ONCE, as it's shared by all runs.
     print("--- Loading shared geometry for all simulation runs... ---")

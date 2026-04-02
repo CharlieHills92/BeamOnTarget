@@ -1,5 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_all
+
+PROJECT_DIR = os.path.abspath(os.path.dirname(__file__))
 
 datas = []
 binaries = []
@@ -18,13 +21,14 @@ tmp_ret = collect_all('rtree')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 datas += [
-    ('BOT_logo.png', '.'),
-    ('BOT_icon.bmp', '.'),
+    (os.path.join(PROJECT_DIR, 'BOT_logo.png'), '.'),
+    (os.path.join(PROJECT_DIR, 'BOT_icon.bmp'), '.'),
+    (os.path.join(PROJECT_DIR, 'BOT_icon.ico'), '.'),
 ]
 
 
 a = Analysis(
-    ['sim_gui.py'],
+    [os.path.join(PROJECT_DIR, 'sim_gui.py')],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -44,12 +48,12 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='BeamOnTarget',
+    icon=os.path.join(PROJECT_DIR, 'BOT_icon.ico'),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     console=False,
-    icon='BOT_icon.ico',
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
