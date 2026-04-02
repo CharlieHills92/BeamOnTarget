@@ -17,6 +17,11 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('rtree')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
+datas += [
+    ('BOT_logo.png', '.'),
+    ('BOT_icon.bmp', '.'),
+]
+
 
 a = Analysis(
     ['sim_gui.py'],
@@ -44,6 +49,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
+    icon='BOT_icon.ico',
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

@@ -22,6 +22,7 @@ matplotlib.use("Agg")  # non-interactive backend; we blit to Tk canvases
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from PIL import Image, ImageTk
 
 import viewer  # built-in Open3D viewer
 
@@ -34,6 +35,8 @@ _SCRIPT_DIR = (os.path.dirname(sys.executable) if _IS_FROZEN
 _CONFIG_JSON = os.path.join(_SCRIPT_DIR, "config.json")
 _RUN_SIMULATION = os.path.join(_SCRIPT_DIR, "run_simulation.py")
 _PYTHON = sys.executable  # the same Python that launched the GUI
+_SPLASH_LOGO = os.path.join(_SCRIPT_DIR, "BOT_logo.png")
+_APP_ICON_BMP = os.path.join(_SCRIPT_DIR, "BOT_icon.bmp")
 
 
 # ===================================================================
@@ -226,6 +229,14 @@ def launch_paraview(script_content, pv_path, pv_module="ParaView"):
 class SimGUI(tk.Tk):
     def __init__(self):
         super().__init__()
+        self._icon_photo = None
+        self._splash_logo_photo = None
+        self._splash = None
+
+        self.withdraw()
+        self._set_app_icon()
+        self._show_startup_logo()
+
         self.title("BeamOnTarget — Simulation Manager")
         self.geometry("1000x760")
         self.minsize(860, 640)
@@ -233,6 +244,48 @@ class SimGUI(tk.Tk):
         self._apply_theme()
         self._build_ui()
         self._build_statusbar()
+
+        self.deiconify()
+        self.lift()
+        self.after(250, self._close_startup_logo)
+
+    def _set_app_icon(self):
+        """Set the runtime app icon for title bar/taskbar on Windows."""
+        try:
+            if os.path.exists(_APP_ICON_BMP):
+                self._icon_photo = ImageTk.PhotoImage(Image.open(_APP_ICON_BMP))
+                self.iconphoto(True, self._icon_photo)
+        except Exception:
+            pass
+
+    def _show_startup_logo(self):
+        """Show a centered splash logo while the GUI is initializing."""
+        if not os.path.exists(_SPLASH_LOGO):
+            return
+        try:
+            self._splash_logo_photo = tk.PhotoImage(file=_SPLASH_LOGO)
+            splash = tk.Toplevel(self)
+            splash.overrideredirect(True)
+            splash.attributes("-topmost", True)
+
+            label = tk.Label(splash, image=self._splash_logo_photo, borderwidth=0, highlightthickness=0)
+            label.pack()
+
+            splash.update_idletasks()
+            width = self._splash_logo_photo.width()
+            height = self._splash_logo_photo.height()
+            x = (self.winfo_screenwidth() - width) // 2
+            y = (self.winfo_screenheight() - height) // 2
+            splash.geometry(f"{width}x{height}+{x}+{y}")
+            splash.update()
+            self._splash = splash
+        except Exception:
+            self._splash = None
+
+    def _close_startup_logo(self):
+        if self._splash is not None and self._splash.winfo_exists():
+            self._splash.destroy()
+            self._splash = None
 
     # ------------------------------------------------------------------
     #  Modern theme & styling
@@ -637,7 +690,7 @@ class SimGUI(tk.Tk):
             entries[key] = (v, typ)
 
         bools = [
-            ("save_details", "Save detailed reports", False),
+            ("save_details", "Save detailed reports (VTP files)", False),
             ("is_diagnostic", "Is diagnostic (transparent)", False),
             ("save_impact_data", "Save impact data", False),
             ("show_in_plot", "Show in plot", False),
