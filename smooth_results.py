@@ -21,20 +21,7 @@ from scipy.spatial import cKDTree
 import os
 import time
 
-# --- Default Configuration for Standalone Running ---
-# This part is only used if you run `python smooth_results.py` directly.
-INPUT_DIRECTORY_STANDALONE = "OUTPUT"
-SMOOTHING_TASKS_STANDALONE = [
-    {
-        "input_filename": "results_front_tube_15.vtp",
-        "output_filename": "smoothed_front_tube_15.vtp",
-        "radius": 0.02,         # smoothing radius in metres
-        "max_cell_area": 4e-6   # only smooth cells smaller than 4e-6 m²
-    }
-]
-
-
-# --- This is the core, reusable function ---
+# --- Core reusable function ---
 def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
     """
     Applies area-weighted moving average smoothing to a PyVista mesh.
@@ -191,6 +178,17 @@ def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
 # The main block allows this script to be run by itself for testing single files.
 def main():
     """Main function for standalone execution."""
+    # --- Standalone configuration (only used when run directly) ---
+    INPUT_DIRECTORY_STANDALONE = "OUTPUT"
+    SMOOTHING_TASKS_STANDALONE = [
+        {
+            "input_filename": "results_front_tube_15.vtp",
+            "output_filename": "smoothed_front_tube_15.vtp",
+            "radius": 0.02,         # smoothing radius in metres
+            "max_cell_area": 4e-6   # only smooth cells smaller than 4e-6 m²
+        }
+    ]
+
     if not os.path.isdir(INPUT_DIRECTORY_STANDALONE):
         print(f"FATAL ERROR: Input directory '{INPUT_DIRECTORY_STANDALONE}' not found.")
         return

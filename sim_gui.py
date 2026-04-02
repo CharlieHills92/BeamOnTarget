@@ -25,6 +25,7 @@ from matplotlib.figure import Figure
 from PIL import Image, ImageTk
 
 import viewer  # built-in Open3D viewer
+from config import load_config, save_config
 
 # ---------------------------------------------------------------------------
 # Resolve paths
@@ -45,15 +46,6 @@ _APP_ICON_BMP = os.path.join(_SCRIPT_DIR, "BOT_icon.bmp")
 def _resolve_path(relative_path):
     """Resolve a simulation-file path relative to the main application folder."""
     return os.path.join(_SCRIPT_DIR, relative_path)
-
-
-def load_config():
-    with open(_CONFIG_JSON, "r") as f:
-        return json.load(f)
-
-def save_config(data):
-    with open(_CONFIG_JSON, "w") as f:
-        json.dump(data, f, indent=4)
 
 
 # ===================================================================
@@ -263,7 +255,8 @@ class SimGUI(tk.Tk):
         if not os.path.exists(_SPLASH_LOGO):
             return
         try:
-            self._splash_logo_photo = tk.PhotoImage(file=_SPLASH_LOGO)
+            img = Image.open(_SPLASH_LOGO)
+            self._splash_logo_photo = ImageTk.PhotoImage(img)
             splash = tk.Toplevel(self)
             splash.overrideredirect(True)
             splash.attributes("-topmost", True)
@@ -272,8 +265,8 @@ class SimGUI(tk.Tk):
             label.pack()
 
             splash.update_idletasks()
-            width = self._splash_logo_photo.width()
-            height = self._splash_logo_photo.height()
+            width = img.width
+            height = img.height
             x = (self.winfo_screenwidth() - width) // 2
             y = (self.winfo_screenheight() - height) // 2
             splash.geometry(f"{width}x{height}+{x}+{y}")

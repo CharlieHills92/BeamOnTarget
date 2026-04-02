@@ -32,6 +32,11 @@ def _load_json(path=None):
         return json.load(f)
 
 
+def load_config(path=None):
+    """Read the JSON config and return a plain dict (public alias for _load_json)."""
+    return _load_json(path)
+
+
 def save_config(data=None, path=None):
     """Write the current (or given) config dict back to JSON."""
     path = path or _CONFIG_FILE

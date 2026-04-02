@@ -49,6 +49,11 @@ class ParticleSource:
         """Generates the charge state for each particle."""
         return np.full(self.num_particles, self.charge_state, dtype=int)
 
+        def _generate_power(self, particle_energies_eV, particle_currents):
+            """Calculates the power of each particle in Watts: P = E [eV] * I [A] / |q|."""
+            charge_divisor = max(abs(int(self.charge_state)), 1)
+            return particle_energies_eV * particle_currents / charge_divisor
+
 
 class PlanarBeam(ParticleSource):
     """A rectangular beam of parallel particles."""
@@ -71,7 +76,7 @@ class PlanarBeam(ParticleSource):
         ray_directions = np.tile(self.direction, (self.num_particles, 1))
         particle_energies_eV = self._generate_energy(); particle_currents = self._generate_current()
         particle_charge_states = self._generate_charge_state()
-        particle_powers = particle_energies_eV * particle_currents
+            particle_powers = self._generate_power(particle_energies_eV, particle_currents)
         return ray_origins, ray_directions, particle_powers, particle_energies_eV, particle_currents, particle_charge_states
 
 
@@ -103,7 +108,7 @@ class ConicalBeam(ParticleSource):
         ray_origins = np.tile(self.origin, (self.num_particles, 1))
         particle_energies_eV = self._generate_energy(); particle_currents = self._generate_current()
         particle_charge_states = self._generate_charge_state()
-        particle_powers = particle_energies_eV * particle_currents
+            particle_powers = self._generate_power(particle_energies_eV, particle_currents)
         return ray_origins, ray_directions, particle_powers, particle_energies_eV, particle_currents, particle_charge_states
 
 
@@ -128,7 +133,7 @@ class GaussianBeam(ParticleSource):
         ray_directions = np.tile(self.direction, (self.num_particles, 1))
         particle_energies_eV = self._generate_energy(); particle_currents = self._generate_current()
         particle_charge_states = self._generate_charge_state()
-        particle_powers = particle_energies_eV * particle_currents
+            particle_powers = self._generate_power(particle_energies_eV, particle_currents)
         return ray_origins, ray_directions, particle_powers, particle_energies_eV, particle_currents, particle_charge_states
 
 
@@ -158,7 +163,7 @@ class TwissBeam(ParticleSource):
         ray_directions /= np.linalg.norm(ray_directions, axis=1)[:, np.newaxis]
         particle_energies_eV = self._generate_energy(); particle_currents = self._generate_current()
         particle_charge_states = self._generate_charge_state()
-        particle_powers = particle_energies_eV * particle_currents
+            particle_powers = self._generate_power(particle_energies_eV, particle_currents)
         return ray_origins, ray_directions, particle_powers, particle_energies_eV, particle_currents, particle_charge_states
 
 
@@ -186,7 +191,7 @@ class GaussianTwissBeam(ParticleSource):
         ray_directions /= np.linalg.norm(ray_directions, axis=1)[:, np.newaxis]
         particle_energies_eV = self._generate_energy(); particle_currents = self._generate_current()
         particle_charge_states = self._generate_charge_state()
-        particle_powers = particle_energies_eV * particle_currents
+            particle_powers = self._generate_power(particle_energies_eV, particle_currents)
         return ray_origins, ray_directions, particle_powers, particle_energies_eV, particle_currents, particle_charge_states
 
 
@@ -236,7 +241,7 @@ def load_beamlets_from_file(filename, num_particles_per_beamlet, beamlet_area):
 
         # Create the HALO beam
         if halo_frac > 0:
-            num_halo, current_halo = int(num_particles_per_beamlet * halo_frac), total_current * halo_frac
+              num_halo, current_halo = num_particles_per_beamlet - num_core, total_current * halo_frac
             delta_hx, delta_hy = row['DeltaHY_rad'], row['DeltaHZ_rad']
             delta_hx = delta_hx / np.sqrt(2) # convert e-fold to sigma
             delta_hy = delta_hy / np.sqrt(2) # convert e-fold to sigma
