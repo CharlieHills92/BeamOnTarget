@@ -23,6 +23,30 @@ import output
 import batch_smoother # <-- NEW: Import the batch smoother script
 import generate_report
 
+
+def _resolve_config_relative_paths(config_path):
+    """Resolve path-like config entries relative to the selected config file."""
+    if not config_path:
+        return
+
+    base_dir = os.path.dirname(os.path.abspath(config_path))
+
+    def _abs_if_relative(path_value):
+        if not path_value:
+            return path_value
+        if os.path.isabs(path_value):
+            return path_value
+        return os.path.abspath(os.path.join(base_dir, path_value))
+
+    config.GEOMETRY_CACHE_DIR = _abs_if_relative(config.GEOMETRY_CACHE_DIR)
+    config.PARTICLE_SOURCE_DIR = _abs_if_relative(config.PARTICLE_SOURCE_DIR)
+    config.DETAILED_OUTPUT_DIR = _abs_if_relative(config.DETAILED_OUTPUT_DIR)
+
+    resolved_folders = {}
+    for folder, settings in config.GEOMETRY_FOLDERS.items():
+        resolved_folders[_abs_if_relative(folder)] = settings
+    config.GEOMETRY_FOLDERS = resolved_folders
+
 def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
     """
     The main simulation workflow for a SINGLE run.
@@ -169,8 +193,12 @@ def run_setup_preview(grouped_meshes, view_mode):
     print("\nSetup preview finished.")
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Run a particle-mesh interaction simulation.", formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument(
+        '-i', '--input-config',
+        default=None,
+        help="Path to a JSON configuration file. Defaults to config.json.")
     parser.add_argument(
         '--view-setup', nargs='?', const='full', default=None,
         choices=['geo', 'full'],
@@ -178,15 +206,24 @@ if __name__ == "__main__":
              "  'geo': Show geometry only.\n"
              "  'full': Show geometry and particle sources.\n"
              "  (default if flag is used with no value: 'full')")
-    args = parser.parse_args()
-    
+    args = parser.parse_args(argv)
+
+    if args.input_config:
+        cfg_path = os.path.abspath(args.input_config)
+        if not os.path.isfile(cfg_path):
+            print(f"FATAL ERROR: Config file not found: '{cfg_path}'")
+            return
+        config.apply_config(path=cfg_path)
+        _resolve_config_relative_paths(cfg_path)
+        print(f"Using configuration file: {cfg_path}")
+
     # Load geometry ONCE, as it's shared by all runs.
     print("--- Loading shared geometry for all simulation runs... ---")
     grouped_geometry = geometry.load_scene(
         geometry_folders=config.GEOMETRY_FOLDERS,
         cache_dir=config.GEOMETRY_CACHE_DIR
     )
-    
+
     if args.view_setup:
         run_setup_preview(grouped_geometry, view_mode=args.view_setup)
     else:
@@ -194,19 +231,21 @@ if __name__ == "__main__":
         if config.PARTICLE_SOURCE_DIR:
             search_path = os.path.join(config.PARTICLE_SOURCE_DIR, '*.bl')
             beam_config_files = sorted(glob.glob(search_path))
-            
+
             if not beam_config_files:
                 print(f"Error: No .bl files found in the specified directory: '{config.PARTICLE_SOURCE_DIR}'")
             else:
                 print(f"\nFound {len(beam_config_files)} beam configurations to simulate.")
                 for beam_file in beam_config_files:
-                    # Create a unique subfolder name from the beam file's name
                     subfolder_name = os.path.splitext(os.path.basename(beam_file))[0]
-                    # Run the entire simulation for this one beam file
                     run_full_simulation(grouped_geometry, beam_file, subfolder_name)
         else:
             print("\nPARTICLE_SOURCE_DIR not specified. Attempting single fallback run...")
             if config.PARTICLE_SOURCES:
-                 run_full_simulation(grouped_geometry, None, "fallback_run")
+                run_full_simulation(grouped_geometry, None, "fallback_run")
             else:
-                 print("No particle sources defined for fallback run.")
+                print("No particle sources defined for fallback run.")
+
+
+if __name__ == "__main__":
+    main()

@@ -4,9 +4,6 @@ import pyvista as pv
 import numpy as np
 import pandas as pd
 import os
-import glob
-import trimesh
-from scipy.spatial import KDTree
 
 # --- Configuration for Visualization Performance ---
 # Target number of faces for simplified visualization meshes.
@@ -63,68 +60,6 @@ def save_paraview_reports(original_meshes, deposited_power, object_names, save_f
     print("ParaView report generation complete.")
 
 
-# def save_paraview_reports(original_meshes, deposited_power, object_names, save_flags, output_directory):
-#     """
-#     Saves the final results to .vtp files, ensuring data is correctly mapped
-#     to a cleaned version of the geometry to prevent corruption.
-#     """
-#     if not any(save_flags):
-#         print("\nNo objects configured for detailed saving.")
-#         return
-        
-#     print(f"\nSaving ParaView (.vtp) reports to folder: '{output_directory}'...")
-#     os.makedirs(output_directory, exist_ok=True)
-    
-#     for i, original_mesh_trimesh in enumerate(original_meshes):
-#         if not save_flags[i]:
-#             continue
-            
-#         object_name = object_names[i]
-#         power_data_original = deposited_power[i]
-        
-#         # --- NEW, ROBUST DATA MAPPING AND SAVING PROCESS ---
-        
-#         # 1. Create a cleaned version of the geometry.
-#         #    We start from the trimesh object for consistency.
-#         cleaned_mesh_trimesh = original_mesh_trimesh.copy()
-#         # You can use trimesh's processing tools for cleaning if needed
-#         # e.g., cleaned_mesh_trimesh.remove_degenerate_faces()
-#         # For now, we'll convert to pyvista and clean there.
-#         pv_mesh_cleaned = pv.wrap(cleaned_mesh_trimesh)
-#         pv_mesh_cleaned.clean(inplace=True)
-        
-#         # 2. Check if the mesh is still valid.
-#         if pv_mesh_cleaned.n_cells == 0:
-#             print(f"  - WARNING: Mesh for '{object_name}' became empty after cleaning. Skipping file save.")
-#             continue
-
-#         # 3. MAP the original data to the cleaned mesh using a KD-Tree.
-#         #    This finds the closest original face for each face in the new, cleaned mesh.
-#         print(f"  - Mapping data from original ({len(original_mesh_trimesh.faces)} faces) to cleaned ({pv_mesh_cleaned.n_cells} faces) mesh for '{object_name}'...")
-#         tree = KDTree(original_mesh_trimesh.triangles_center)
-#         _, closest_face_indices = tree.query(pv_mesh_cleaned.cell_centers().points)
-        
-#         # 4. Create new data arrays by sampling from the original data.
-#         power_data_mapped = power_data_original[closest_face_indices]
-        
-#         # 5. Attach the NEW, correctly-sized data arrays to the CLEANED mesh.
-#         face_areas_cleaned = pv_mesh_cleaned.area
-#         power_density_mapped = np.divide(power_data_mapped, face_areas_cleaned, out=np.zeros_like(power_data_mapped), where=face_areas_cleaned > 0)
-        
-#         pv_mesh_cleaned.cell_data['Deposited_Power_W'] = power_data_mapped
-#         pv_mesh_cleaned.cell_data['Power_Density_W_m2'] = power_density_mapped
-#         pv_mesh_cleaned.field_data['source_filename'] = np.array([object_name])
-        
-#         # 6. Save the clean mesh with its correctly mapped data.
-#         sanitized_name = os.path.splitext(object_name)[0]
-#         output_filename = f"results_{sanitized_name}.vtp"
-#         full_output_path = os.path.join(output_directory, output_filename)
-        
-#         pv_mesh_cleaned.save(full_output_path, binary=True)
-#         print(f"  - Saved clean ParaView report for '{object_name}' to '{full_output_path}'")
-            
-#     print("ParaView report generation complete.")
-
 
 def visualize_setup(grouped_meshes, particle_sources, geometry_folders_config, show_sources=True):
     """
@@ -167,68 +102,10 @@ def visualize_setup(grouped_meshes, particle_sources, geometry_folders_config, s
     print("Showing interactive setup plot. Close the window to continue.")
     plotter.show()
 
-def visualize_scene(original_meshes, deposited_power, object_names, geometry_folders_config):
-    """
-    Creates an interactive plot of results. DOES NOT PLOT RAYS.
-    """
-    print("\nGenerating results visualization...")
-    plotter = pv.Plotter(window_size=[1200, 900], notebook=False)
-    
-    scene_for_plotting, all_power_densities = pv.MultiBlock(), []
-    file_settings_map = {}
-    for folder, settings in geometry_folders_config.items():
-        search_path = os.path.join(folder, '*.stl')
-        for f in glob.glob(search_path): file_settings_map[os.path.basename(f)] = settings
-    for i, full_mesh in enumerate(original_meshes):
-        settings = file_settings_map.get(object_names[i], {})
-        if not settings.get("show_in_plot", True): continue
-        vis_mesh_trimesh = full_mesh
-        if VISUALIZATION_DECIMATION_TARGET_FACES and len(full_mesh.faces) > VISUALIZATION_DECIMATION_TARGET_FACES:
-            vis_mesh_trimesh = full_mesh.simplify_quadric_decimation(face_count=VISUALIZATION_DECIMATION_TARGET_FACES)
-        pv_mesh = pv.wrap(vis_mesh_trimesh)
-        tree = KDTree(full_mesh.triangles_center); _, closest_face_indices = tree.query(vis_mesh_trimesh.triangles_center)
-        resampled_power, resampled_areas = deposited_power[i][closest_face_indices], vis_mesh_trimesh.area_faces
-        power_density = np.divide(resampled_power, resampled_areas, out=np.zeros(len(resampled_areas)), where=resampled_areas > 0)
-        all_power_densities.append(power_density); pv_mesh.cell_data['Power_Density_W_m2'] = power_density
-        scene_for_plotting.append(pv_mesh)
-    if all_power_densities: global_max = np.max([np.max(d) for d in all_power_densities if d.size > 0] or [1.0])
-    else: global_max = 1.0
-    if global_max == 0: global_max = 1.0
-    if scene_for_plotting.n_blocks > 0:
-        plotter.add_mesh(scene_for_plotting, scalars='Power_Density_W_m2', cmap='inferno', clim=[0, global_max], scalar_bar_args={'title': 'Power Density (W/m^2)'})
-
-    rays_were_plotted = False
-    if visualize_all_rays:
-        if len(all_ray_origins) > 0:
-            rays_were_plotted = True
-            print("  - Visualizing a sample of ALL generated rays (hits and misses)...")
-            scene_mesh_for_viz = trimesh.util.concatenate(original_meshes)
-            intersector_viz = trimesh.ray.ray_pyembree.RayMeshIntersector(scene_mesh_for_viz)
-            locations_viz, index_ray_viz, _ = intersector_viz.intersects_location(ray_origins=all_ray_origins, ray_directions=all_ray_directions, multiple_hits=False)
-            ray_length = np.linalg.norm(scene_mesh_for_viz.bounding_box.extents); endpoints = all_ray_origins + all_ray_directions * ray_length; endpoints[index_ray_viz] = locations_viz
-            hit_mask = np.zeros(len(all_ray_origins), dtype=bool); hit_mask[index_ray_viz] = True
-            if np.any(~hit_mask):
-                points = np.c_[all_ray_origins[~hit_mask], endpoints[~hit_mask]].reshape(-1, 3); n_lines = len(points)//2; lines = np.c_[np.full(n_lines, 2), np.arange(n_lines*2).reshape(-1, 2)]; plotter.add_mesh(pv.PolyData(points, lines=lines), color='red', line_width=1, label='Missed Rays')
-            if np.any(hit_mask):
-                points = np.c_[all_ray_origins[hit_mask], endpoints[hit_mask]].reshape(-1, 3); n_lines = len(points)//2; lines = np.c_[np.full(n_lines, 2), np.arange(n_lines*2).reshape(-1, 2)]; plotter.add_mesh(pv.PolyData(points, lines=lines), color='cyan', line_width=1, label='Hitting Rays')
-    else:
-        if len(hit_ray_origins) > 0:
-            rays_were_plotted = True
-            print("  - Visualizing a random sample of ONLY hitting rays...");
-            points = np.c_[hit_ray_origins, hit_ray_endpoints].reshape(-1, 3); n_lines = len(hit_ray_origins); lines_array = np.c_[np.full(n_lines, 2), np.arange(n_lines * 2).reshape(-1, 2)]
-            plotter.add_mesh(pv.PolyData(points, lines=lines_array), color='cyan', line_width=1, label='Hitting Rays')
-    if rays_were_plotted:
-        plotter.add_legend()
-    plotter.enable_parallel_projection(); plotter.add_axes(); plotter.camera_position = 'xy'
-    plotter.show_bounds(grid='front', location='outer', all_edges=True);
-    print("Showing interactive plot..."); plotter.show()
-
-def save_summary_to_csv(original_meshes, deposited_power, object_names, filename, outputdirectory="."):
-    """
-    Saves a summary of total power and peak power density for each object.
-    This version filters invalid data to ensure consistency with analysis scripts.
-    """
-    print(f"\nSaving object power summary to '{filename}'...")
+def save_summary_to_csv(original_meshes, deposited_power, object_names, outfile):
+    """Write per-object summary to a CSV file."""
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    print(f"\nSaving object power summary to '{outfile}'...")
     summary_data = []
     
     for i, mesh in enumerate(original_meshes):
@@ -260,24 +137,8 @@ def save_summary_to_csv(original_meshes, deposited_power, object_names, filename
     df = pd.DataFrame(summary_data)
     df['total_deposited_power_W'] = df['total_deposited_power_W'].apply(lambda x: f'{x:.4e}')
     df['peak_power_density_W_m2'] = df['peak_power_density_W_m2'].apply(lambda x: f'{x:.4e}')
-    outfile = os.path.join(outputdirectory, filename)
     df.to_csv(outfile, index=False)
     print("Summary save complete.")
-# def save_summary_to_csv(original_meshes, deposited_power, object_names, filename):
-#     """Saves a high-level summary of total power and peak power density."""
-#     print(f"\nSaving object power summary to '{filename}'...")
-#     summary_data = []
-#     for i, mesh in enumerate(original_meshes):
-#         power_array, total_power = deposited_power[i], np.sum(deposited_power[i])
-#         face_areas = mesh.area_faces
-#         power_density = np.divide(power_array, face_areas, out=np.zeros_like(power_array), where=face_areas > 0)
-#         peak_density = np.max(power_density)
-#         summary_data.append({'object_name': object_names[i], 'total_deposited_power_W': total_power, 'peak_power_density_W_m2': peak_density})
-#     df = pd.DataFrame(summary_data)
-#     df['total_deposited_power_W'] = df['total_deposited_power_W'].apply(lambda x: f'{x:.3e}')
-#     df['peak_power_density_W_m2'] = df['peak_power_density_W_m2'].apply(lambda x: f'{x:.3e}')
-#     df.to_csv(filename, index=False)
-#     print("Summary save complete.")
 
 
 def save_detailed_reports(original_meshes, deposited_power, object_names, save_flags, 
@@ -318,8 +179,8 @@ def save_impact_data_csv(impact_data, object_names, save_impact_flags, output_di
     """
     Saves per-particle impact data as CSV files for objects flagged with save_impact_data=True.
 
-    Each CSV contains columns: mass_kg, charge_state, pos_x, pos_y, pos_z,
-                                dir_x, dir_y, dir_z, kinetic_energy_eV.
+    Each CSV contains columns: source_index, mass_kg, charge_state, pos_x, pos_y, pos_z,
+                                dir_x, dir_y, dir_z, kinetic_energy_eV, current_A.
     A header comment records the total number of impacts and how many were stored.
 
     Args:
@@ -346,8 +207,8 @@ def save_impact_data_csv(impact_data, object_names, save_impact_flags, output_di
         sanitized_name = os.path.splitext(name)[0]
         csv_path = os.path.join(output_directory, f"impact_data_{sanitized_name}.csv")
 
-        columns = ['mass_kg', 'charge_state', 'pos_x', 'pos_y', 'pos_z',
-                    'dir_x', 'dir_y', 'dir_z', 'kinetic_energy_eV']
+        columns = ['source_index', 'mass_kg', 'charge_state', 'pos_x', 'pos_y', 'pos_z',
+                    'dir_x', 'dir_y', 'dir_z', 'kinetic_energy_eV', 'current_A']
 
         with open(csv_path, 'w') as f:
             f.write(f"# Impact data for: {name}\n")
@@ -360,6 +221,7 @@ def save_impact_data_csv(impact_data, object_names, save_impact_flags, output_di
 
         if records:
             df = pd.DataFrame(records, columns=columns)
+            df['source_index'] = df['source_index'].astype(int)
             df['charge_state'] = df['charge_state'].astype(int)
             df.to_csv(csv_path, index=False, mode='a')
         else:

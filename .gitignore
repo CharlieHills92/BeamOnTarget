@@ -4,3 +4,9 @@ __pycache__/
 OUTPUT/
 geometry_cache/
 DUMMY/
+.pv_temp_script.py
+build/
+dist/
+*.egg-info/
+logs/
+

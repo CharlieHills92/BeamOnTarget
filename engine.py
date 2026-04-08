@@ -35,15 +35,18 @@ def _process_source_chunk(source_chunk, intersector, face_offsets, face_counts,
     
     # Generate all particles for the sources in this chunk
     chunk_origins_list, chunk_dirs_list, chunk_powers_list, chunk_energies_list = [], [], [], []
-    chunk_masses_list, chunk_charges_list = [], []
+    chunk_masses_list, chunk_charges_list, chunk_source_indices_list, chunk_currents_list = [], [], [], []
     for source in source_chunk:
         if source.num_particles > 0:
             origins, dirs, powers, energies, currents, charge_states = source.generate()
             chunk_origins_list.append(origins); chunk_dirs_list.append(dirs)
             chunk_powers_list.append(powers); chunk_energies_list.append(energies)
+            chunk_currents_list.append(currents)
             # Mass is a scalar per source; expand to per-particle array
             chunk_masses_list.append(np.full(len(origins), source.mass, dtype=np.float64))
             chunk_charges_list.append(charge_states)
+            # Source index: scalar per source, expand to per-particle array
+            chunk_source_indices_list.append(np.full(len(origins), source.source_index, dtype=np.int32))
             
     if not chunk_origins_list:
         return sparse_updates, impact_records  # No particles; no updates
@@ -54,6 +57,8 @@ def _process_source_chunk(source_chunk, intersector, face_offsets, face_counts,
     particle_energies_eV = np.concatenate(chunk_energies_list)
     particle_masses = np.concatenate(chunk_masses_list)
     particle_charges = np.concatenate(chunk_charges_list)
+    particle_source_indices = np.concatenate(chunk_source_indices_list)
+    particle_currents = np.concatenate(chunk_currents_list)
 
     locations, index_ray, index_tri_global = intersector.intersects_location(
         ray_origins=ray_origins, ray_directions=ray_directions, multiple_hits=False)
@@ -108,20 +113,24 @@ def _process_source_chunk(source_chunk, intersector, face_offsets, face_counts,
                 hit_energies = particle_energies_eV[hit_rays]
                 hit_masses = particle_masses[hit_rays]
                 hit_charges = particle_charges[hit_rays]
+                hit_src_indices = particle_source_indices[hit_rays]
+                hit_currents = particle_currents[hit_rays]
 
                 # Send ALL records from this chunk to the manager;
                 # the manager applies reservoir sampling for unbiased selection.
                 for k in range(hit_count):
                     impact_records[obj_idx]['data'].append((
-                        hit_masses[k],          # mass_kg
-                        int(hit_charges[k]),     # charge_state
-                        hit_locs[k, 0],          # pos_x
-                        hit_locs[k, 1],          # pos_y
-                        hit_locs[k, 2],          # pos_z
-                        hit_dirs[k, 0],          # dir_x
-                        hit_dirs[k, 1],          # dir_y
-                        hit_dirs[k, 2],          # dir_z
-                        hit_energies[k],         # kinetic_energy_eV
+                        int(hit_src_indices[k]),  # source_index
+                        hit_masses[k],            # mass_kg
+                        int(hit_charges[k]),       # charge_state
+                        hit_locs[k, 0],            # pos_x
+                        hit_locs[k, 1],            # pos_y
+                        hit_locs[k, 2],            # pos_z
+                        hit_dirs[k, 0],            # dir_x
+                        hit_dirs[k, 1],            # dir_y
+                        hit_dirs[k, 2],            # dir_z
+                        hit_energies[k],           # kinetic_energy_eV
+                        hit_currents[k],           # current_A
                     ))
 
     return sparse_updates, impact_records
@@ -136,8 +145,8 @@ def run_simulation_single_hit(scene_mesh, face_offsets, face_counts, particle_so
       impact_data: list of dicts per object. Each dict has:
         'total_hits': int — total number of particle impacts on this object
         'stored_hits': int — number of impact records actually stored (≤ max_impact_records)
-        'records': list of tuples (mass_kg, charge_state, pos_x, pos_y, pos_z,
-                                   dir_x, dir_y, dir_z, kinetic_energy_eV)
+        'records': list of tuples (source_index, mass_kg, charge_state, pos_x, pos_y, pos_z,
+                                   dir_x, dir_y, dir_z, kinetic_energy_eV, current_A)
       Only populated for objects where save_impact_flags[i] is True.
     """
     num_objects = len(face_counts)

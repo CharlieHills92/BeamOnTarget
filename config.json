@@ -1,0 +1,54 @@
+{
+    "NUM_CPU_CORES": 1,
+    "ENABLE_DIAGNOSTIC_SURFACES": false,
+    "GEOMETRY_CACHE_DIR": "geometry_cache",
+    "GEOMETRY_FOLDERS": {
+        "NEU": {
+            "scale": 1.0,
+            "target_length": 1.0,
+            "save_details": true,
+            "is_diagnostic": false,
+            "save_impact_data": false,
+            "show_in_plot": false,
+            "max_impact_records": null
+        },
+        "RID": {
+            "scale": 1.0,
+            "target_length": 1.0,
+            "save_details": true,
+            "is_diagnostic": false,
+            "save_impact_data": false,
+            "show_in_plot": false,
+            "max_impact_records": null
+        },
+        "CAL": {
+            "scale": 1.0,
+            "target_length": 0.5,
+            "save_details": true,
+            "is_diagnostic": false,
+            "save_impact_data": false,
+            "show_in_plot": false,
+            "max_impact_records": 10000
+        }
+    },
+    "PARTICLE_SOURCE_DIR": "BEAM_CONFIGS",
+    "NUM_PARTICLES_PER_BEAMLET": 1001,
+    "BEAMLET_RADIUS_M": 0.007,
+    "SOURCES_PER_WORKER": null,
+    "PARTICLE_BATCH_SIZE": 2500000,
+    "DEPOSITION_FRACTION": 1.0,
+    "SAVE_PARAVIEW_FILES": true,
+    "DETAILED_OUTPUT_DIR": "OUTPUT",
+    "ENABLE_VISUALIZATION": true,
+    "SAVE_BINARY_POWERLOADS": false,
+    "SAVE_CSV_REPORTS": false,
+    "RUN_VISUALIZATION_AFTER_SIM": false,
+    "VISUALIZE_ALL_RAYS": false,
+    "SUMMARY_CSV_FILENAME": "power_summary_by_object.csv",
+    "NUM_RAYS_TO_SHOW_IN_PLOT": 0,
+    "RUN_SMOOTHER_AFTER_SIM": false,
+    "SMOOTHING_RADIUS": 0.02,
+    "SMOOTHING_MAX_CELL_AREA": 4e-06,
+    "PARAVIEW_PATH": "/work/imas/opt/EasyBuild/software/ParaView/5.12.0-intel-2023b/bin/paraview",
+    "PARAVIEW_MODULE": "ParaView"
+}

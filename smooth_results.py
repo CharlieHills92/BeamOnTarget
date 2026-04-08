@@ -20,21 +20,12 @@ import numpy as np
 from scipy.spatial import cKDTree
 import os
 import time
+import glob
+import argparse
 
-# --- Default Configuration for Standalone Running ---
-# This part is only used if you run `python smooth_results.py` directly.
-INPUT_DIRECTORY_STANDALONE = "OUTPUT"
-SMOOTHING_TASKS_STANDALONE = [
-    {
-        "input_filename": "results_front_tube_15.vtp",
-        "output_filename": "smoothed_front_tube_15.vtp",
-        "radius": 0.02,         # smoothing radius in metres
-        "max_cell_area": 4e-6   # only smooth cells smaller than 4e-6 m²
-    }
-]
+import config
 
-
-# --- This is the core, reusable function ---
+# --- Core reusable function ---
 def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
     """
     Applies area-weighted moving average smoothing to a PyVista mesh.
@@ -188,31 +179,114 @@ def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
     return mesh, stats
 
 
-# The main block allows this script to be run by itself for testing single files.
-def main():
-    """Main function for standalone execution."""
-    if not os.path.isdir(INPUT_DIRECTORY_STANDALONE):
-        print(f"FATAL ERROR: Input directory '{INPUT_DIRECTORY_STANDALONE}' not found.")
-        return
-    print("--- Running Standalone Smoothing Process ---")
-    for task in SMOOTHING_TASKS_STANDALONE:
-        input_path = os.path.join(INPUT_DIRECTORY_STANDALONE, task["input_filename"])
-        output_path = os.path.join(INPUT_DIRECTORY_STANDALONE, task["output_filename"])
-        radius = task.get("radius", 0.02)
-        max_cell_area = task.get("max_cell_area", None)
+def _resolve_config_relative_paths(config_path):
+    """Resolve path-like config entries relative to selected config file."""
+    base_dir = os.path.dirname(os.path.abspath(config_path))
 
-        if not os.path.isfile(input_path):
-            print(f"  - File not found: {input_path}. Skipping.")
+    def _abs_if_relative(path_value):
+        if not path_value:
+            return path_value
+        if os.path.isabs(path_value):
+            return path_value
+        return os.path.abspath(os.path.join(base_dir, path_value))
+
+    config.DETAILED_OUTPUT_DIR = _abs_if_relative(config.DETAILED_OUTPUT_DIR)
+
+
+def _find_subdirs_with_results(parent_dir):
+    subdirs = []
+    for entry in sorted(os.listdir(parent_dir)):
+        full_path = os.path.join(parent_dir, entry)
+        if not os.path.isdir(full_path):
+            continue
+        if entry.upper() == "SMOOTHED":
+            continue
+        has_results = (glob.glob(os.path.join(full_path, "*.vtp")) or
+                       glob.glob(os.path.join(full_path, "*.vtm")))
+        if has_results:
+            subdirs.append(full_path)
+    return subdirs
+
+
+def main(argv=None):
+    """Smooth existing simulation outputs using a selected JSON config."""
+    import batch_smoother
+    import generate_report
+
+    parser = argparse.ArgumentParser(description="Apply smoothing to completed simulation outputs.")
+    parser.add_argument(
+        '-i', '--input-config',
+        default=None,
+        help="Path to a JSON configuration file. Defaults to config.json.")
+    parser.add_argument(
+        '-r', '--radius',
+        type=float,
+        default=None,
+        help="Override smoothing radius in metres.")
+    parser.add_argument(
+        '-a', '--max-cell-area',
+        type=float,
+        default=None,
+        help="Override maximum smoothed cell area in m^2. Use 0 to smooth all powered cells.")
+    args = parser.parse_args(argv)
+
+    if args.input_config:
+        cfg_path = os.path.abspath(args.input_config)
+        if not os.path.isfile(cfg_path):
+            print(f"FATAL ERROR: Config file not found: '{cfg_path}'")
+            return
+        config.apply_config(path=cfg_path)
+        _resolve_config_relative_paths(cfg_path)
+        print(f"Using configuration file: {cfg_path}")
+
+    output_root = config.DETAILED_OUTPUT_DIR
+    if not os.path.isdir(output_root):
+        print(f"FATAL ERROR: Output directory '{output_root}' not found.")
+        return
+
+    radius = args.radius if args.radius is not None else config.SMOOTHING_RADIUS
+    if args.max_cell_area is None:
+        max_cell_area = config.SMOOTHING_MAX_CELL_AREA
+    else:
+        max_cell_area = args.max_cell_area if args.max_cell_area > 0 else None
+
+    has_direct_results = (glob.glob(os.path.join(output_root, "*.vtp")) or
+                          glob.glob(os.path.join(output_root, "*.vtm")))
+    subdirs = _find_subdirs_with_results(output_root)
+
+    if has_direct_results and not subdirs:
+        dirs_to_process = [output_root]
+    elif subdirs:
+        dirs_to_process = subdirs
+    else:
+        print(f"No .vtp/.vtm files or result subfolders found in '{output_root}'. Nothing to do.")
+        return
+
+    print(f"\n=== Smoothing Configuration ===")
+    print(f"  Radius        : {radius}")
+    print(f"  Max cell area : {max_cell_area}")
+    print(f"  Directories   : {len(dirs_to_process)}")
+    print(f"===============================")
+
+    for idx, result_dir in enumerate(dirs_to_process, 1):
+        print(f"\n[{idx}/{len(dirs_to_process)}] Processing: {result_dir}")
+        try:
+            batch_smoother.batch_process_directory(
+                result_dir,
+                radius=radius,
+                max_cell_area=max_cell_area)
+        except Exception as e:
+            print(f"  ERROR while smoothing '{result_dir}': {e}")
             continue
 
-        print(f"\n  Processing: {task['input_filename']} (radius={radius}, max_cell_area={max_cell_area})")
-        mesh = pv.read(input_path)
-        mesh_copy = mesh.copy(deep=True)
-        smoothed, _stats = apply_smoothing(mesh_copy, radius=radius, max_cell_area=max_cell_area)
-        smoothed.save(output_path, binary=True)
-        print(f"  Saved: {output_path}")
+        smoothed_dir = os.path.join(result_dir, "SMOOTHED")
+        if os.path.isdir(smoothed_dir):
+            try:
+                generate_report.generate_summary_csv(smoothed_dir)
+            except Exception as e:
+                print(f"  ERROR during smoothed report generation: {e}")
 
-    print("\n--- Standalone Smoothing Process Complete ---")
+    print("\n=== Smoothing Complete ===")
 
 if __name__ == "__main__":
     # This block is only executed when you run `python smooth_results.py`
