@@ -67,6 +67,18 @@ def _build_dict():
         "BEAMLET_RADIUS_M": _BEAMLET_RADIUS_M,
         "SOURCES_PER_WORKER": SOURCES_PER_WORKER,
         "PARTICLE_BATCH_SIZE": PARTICLE_BATCH_SIZE,
+        "TRACKING_MODE": TRACKING_MODE,
+        "EM_STEP_LENGTH_M": EM_STEP_LENGTH_M,
+        "EM_MAX_STEPS": EM_MAX_STEPS,
+        "EM_MAX_DISTANCE_M": EM_MAX_DISTANCE_M,
+        "EM_MIN_ENERGY_EV": EM_MIN_ENERGY_EV,
+        "EM_BOUNDING_BOX_MIN_CORNER_M": EM_BOUNDING_BOX_MIN_CORNER_M,
+        "EM_BOUNDING_BOX_MAX_CORNER_M": EM_BOUNDING_BOX_MAX_CORNER_M,
+        "EM_BVH_CHECKPOINT_DISTANCE_M": EM_BVH_CHECKPOINT_DISTANCE_M,
+        "V_RID_V": V_RID_V,
+        "DENSITY_DIRECTION": DENSITY_DIRECTION,
+        "EXTERNAL_FIELD": EXTERNAL_FIELD,
+        "REACTION_MODEL": REACTION_MODEL,
         "DEPOSITION_FRACTION": _DEPOSITION_FRACTION,
         "SAVE_PARAVIEW_FILES": SAVE_PARAVIEW_FILES,
         "DETAILED_OUTPUT_DIR": DETAILED_OUTPUT_DIR,
@@ -107,7 +119,32 @@ def _apply(d):
     batch = d.get("PARTICLE_BATCH_SIZE", 2_500_000)
     g["PARTICLE_BATCH_SIZE"]        = batch
     spw = d.get("SOURCES_PER_WORKER", None)
-    g["SOURCES_PER_WORKER"]         = spw if spw is not None else int(batch / npb)
+    g["SOURCES_PER_WORKER"]         = spw
+
+    g["TRACKING_MODE"]              = d.get("TRACKING_MODE", "ray")
+    g["EM_STEP_LENGTH_M"]           = d.get("EM_STEP_LENGTH_M", 0.02)
+    g["EM_MAX_STEPS"]               = d.get("EM_MAX_STEPS", 500)
+    g["EM_MAX_DISTANCE_M"]          = d.get("EM_MAX_DISTANCE_M", None)
+    g["EM_MIN_ENERGY_EV"]           = d.get("EM_MIN_ENERGY_EV", None)
+    g["EM_BOUNDING_BOX_MIN_CORNER_M"] = d.get("EM_BOUNDING_BOX_MIN_CORNER_M", None)
+    g["EM_BOUNDING_BOX_MAX_CORNER_M"] = d.get("EM_BOUNDING_BOX_MAX_CORNER_M", None)
+    g["EM_BVH_CHECKPOINT_DISTANCE_M"] = d.get("EM_BVH_CHECKPOINT_DISTANCE_M", 1.0)
+    g["V_RID_V"]                    = d.get("V_RID_V", 20e3)
+    g["DENSITY_DIRECTION"]          = d.get(
+        "DENSITY_DIRECTION",
+        d.get("MAIN_BEAM_AXIS_DIRECTION", d.get("Main beam axis direction", [1.0, 0.0, 0.0])),
+    )
+    g["EXTERNAL_FIELD"]             = d.get(
+        "EXTERNAL_FIELD",
+        {
+            "type": "zero",
+            "electric_field_vpm": [0.0, 0.0, 0.0],
+            "magnetic_field_t": [0.0, 0.0, 0.0],
+        },
+    )
+    if str(g["EXTERNAL_FIELD"].get("type", "")).strip().lower() in ("rid_segment_y", "rid_piecewise"):
+        g["EXTERNAL_FIELD"].setdefault("v_rid_v", g["V_RID_V"])
+    g["REACTION_MODEL"]             = d.get("REACTION_MODEL", {"type": "none"})
 
     frac = d.get("DEPOSITION_FRACTION", 1.0)
     g["_DEPOSITION_FRACTION"]       = frac

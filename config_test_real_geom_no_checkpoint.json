@@ -1,7 +1,7 @@
 {
     "NUM_CPU_CORES": 1,
     "ENABLE_DIAGNOSTIC_SURFACES": false,
-    "GEOMETRY_CACHE_DIR": "geometry_cache",
+    "GEOMETRY_CACHE_DIR": "geometry_cache_real",
     "GEOMETRY_FOLDERS": {
         "NEU": {
             "scale": 1.0,
@@ -28,48 +28,39 @@
             "is_diagnostic": false,
             "save_impact_data": false,
             "show_in_plot": false,
-            "max_impact_records": 10000
+            "max_impact_records": null
         }
     },
     "PARTICLE_SOURCE_DIR": "BEAM_CONFIGS",
-    "NUM_PARTICLES_PER_BEAMLET": 1001,
+    "NUM_PARTICLES_PER_BEAMLET": 200,
     "BEAMLET_RADIUS_M": 0.007,
     "SOURCES_PER_WORKER": null,
-    "PARTICLE_BATCH_SIZE": 2500000,
-    "TRACKING_MODE": "ray",
-    "EM_STEP_LENGTH_M": 0.02,
-    "EM_MAX_STEPS": 500,
+    "PARTICLE_BATCH_SIZE": 50000,
+    "TRACKING_MODE": "em_track_then_bvh",
+    "EM_STEP_LENGTH_M": 0.01,
+    "EM_MAX_STEPS": 1200,
     "EM_MAX_DISTANCE_M": null,
     "EM_MIN_ENERGY_EV": null,
-    "EM_BOUNDING_BOX_MIN_CORNER_M": null,
-    "EM_BOUNDING_BOX_MAX_CORNER_M": null,
-    "EM_BVH_CHECKPOINT_DISTANCE_M": 1.0,
-    "V_RID_V": 20000.0,
-    "DENSITY_DIRECTION": [
-        1.0,
-        0.0,
-        0.0
-    ],
+    "EM_BOUNDING_BOX_MIN_CORNER_M": [0.0, -0.5, -1.3],
+    "EM_BOUNDING_BOX_MAX_CORNER_M": [8.0,  0.5,  0.8],
+    "EM_BVH_CHECKPOINT_DISTANCE_M": null,
+    "DENSITY_DIRECTION": [1.0, 0.0, 0.0],
     "EXTERNAL_FIELD": {
-        "type": "zero",
-        "electric_field_vpm": [
-            0.0,
-            0.0,
-            0.0
-        ],
-        "magnetic_field_t": [
-            0.0,
-            0.0,
-            0.0
-        ]
+        "type": "uniform",
+        "electric_field_vpm": [0.0, 0.0, 0.0],
+        "magnetic_field_t": [0.0, 0.0, 0.001]
     },
     "REACTION_MODEL": {
-        "type": "none"
+        "type": "beam_gas_cross_sections",
+        "isotope": "H",
+        "background_density_m3": 0.0,
+        "density_profile_file": "H_dens.dens",
+        "density_profile_direction": [1.0, 0.0, 0.0]
     },
     "DEPOSITION_FRACTION": 1.0,
     "SAVE_PARAVIEW_FILES": true,
     "DETAILED_OUTPUT_DIR": "OUTPUT",
-    "ENABLE_VISUALIZATION": true,
+    "ENABLE_VISUALIZATION": false,
     "SAVE_BINARY_POWERLOADS": false,
     "SAVE_CSV_REPORTS": false,
     "RUN_VISUALIZATION_AFTER_SIM": false,
@@ -79,6 +70,5 @@
     "RUN_SMOOTHER_AFTER_SIM": false,
     "SMOOTHING_RADIUS": 0.02,
     "SMOOTHING_MAX_CELL_AREA": 4e-06,
-    "PARAVIEW_PATH": "/work/imas/opt/EasyBuild/software/ParaView/5.12.0-intel-2023b/bin/paraview",
-    "PARAVIEW_MODULE": "ParaView"
+    "PARAVIEW_PATH": "paraview"
 }

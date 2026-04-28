@@ -20,6 +20,7 @@ import geometry
 import particles
 import engine
 import output
+from prerun_analysis import run_em_prerun_analysis
 import batch_smoother # <-- NEW: Import the batch smoother script
 import generate_report
 
@@ -46,6 +47,7 @@ def _resolve_config_relative_paths(config_path):
     for folder, settings in config.GEOMETRY_FOLDERS.items():
         resolved_folders[_abs_if_relative(folder)] = settings
     config.GEOMETRY_FOLDERS = resolved_folders
+
 
 def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
     """
@@ -93,34 +95,65 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
         print(f"Error: No particle sources loaded or defined for this run. Skipping.")
         return
 
+    output_dir_for_run = os.path.join(config.DETAILED_OUTPUT_DIR, output_subfolder)
+
     # --- Engine Selection Logic ---
-    if config.ENABLE_DIAGNOSTIC_SURFACES:
-        # ... (logic for multi-hit engine) ...
-        is_diagnostic_face = np.zeros(len(scene_mesh.faces), dtype=bool)
-        for i, is_diagnostic in enumerate(is_diagnostic_flags_per_mesh):
-            if is_diagnostic:
-                start_index, end_index = face_offsets[i], face_offsets[i] + face_counts[i]
-                is_diagnostic_face[start_index:end_index] = True
-        
-        # The multi-hit engine should also be updated to only return power
-        deposited_power = engine.run_simulation_multi_hit_parallel(
-            scene_mesh, face_offsets, face_counts, particle_sources_list, config.get_deposition_fraction,
-            is_diagnostic_face, config.NUM_CPU_CORES)
-        # Impact data not yet supported in multi-hit engine
-        impact_data = [{'total_hits': 0, 'stored_hits': 0, 'records': []} for _ in range(len(face_counts))]
-    else:
-        # --- THIS IS THE CORRECTED CALL ---
-        # The engine now returns the final power deposition array and impact data.
+    tracking_mode = str(getattr(config, "TRACKING_MODE", "ray")).strip().lower()
+    
+    if tracking_mode == "ray":
         deposited_power, impact_data = engine.run_simulation_single_hit(
-            scene_mesh, face_offsets, face_counts, particle_sources_list, config.get_deposition_fraction,
-            sources_per_worker=config.SOURCES_PER_WORKER,
+            scene_mesh,
+            face_offsets,
+            face_counts,
+            particle_sources_list,
+            config.get_deposition_fraction,
+            particle_batch_size=config.PARTICLE_BATCH_SIZE,
             num_cpu_cores=config.NUM_CPU_CORES,
             save_impact_flags=save_impact_flags_per_mesh,
-            max_impact_records=max_impact_records_per_mesh)
+            max_impact_records=max_impact_records_per_mesh,
+        )
+    elif tracking_mode == "em_track_then_bvh":
+        reaction_model_cfg = dict(config.REACTION_MODEL or {})
+        reaction_model_cfg.setdefault(
+            "density_direction",
+            getattr(config, "DENSITY_DIRECTION", getattr(config, "MAIN_BEAM_AXIS_DIRECTION", [1.0, 0.0, 0.0])),
+        )
+        run_em_prerun_analysis(
+            particle_sources_list=particle_sources_list,
+            external_field_cfg=config.EXTERNAL_FIELD,
+            reaction_model_cfg=reaction_model_cfg,
+            bbox_min_corner_m=config.EM_BOUNDING_BOX_MIN_CORNER_M,
+            bbox_max_corner_m=config.EM_BOUNDING_BOX_MAX_CORNER_M,
+            output_dir_for_run=output_dir_for_run,
+            em_step_length_m=config.EM_STEP_LENGTH_M,
+        )
+        deposited_power, impact_data = engine.run_simulation_em_track_then_bvh(
+            scene_mesh,
+            face_offsets,
+            face_counts,
+            particle_sources_list,
+            config.get_deposition_fraction,
+            particle_batch_size=config.PARTICLE_BATCH_SIZE,
+            num_cpu_cores=config.NUM_CPU_CORES,
+            em_step_length_m=config.EM_STEP_LENGTH_M,
+            em_max_steps=config.EM_MAX_STEPS,
+            em_max_distance_m=config.EM_MAX_DISTANCE_M,
+            em_min_energy_ev=config.EM_MIN_ENERGY_EV,
+            external_field_cfg=config.EXTERNAL_FIELD,
+            reaction_model_cfg=reaction_model_cfg,
+            bounding_box_min_corner_m=config.EM_BOUNDING_BOX_MIN_CORNER_M,
+            bounding_box_max_corner_m=config.EM_BOUNDING_BOX_MAX_CORNER_M,
+            save_impact_flags=save_impact_flags_per_mesh,
+            max_impact_records=max_impact_records_per_mesh,
+            em_bvh_checkpoint_distance_m=config.EM_BVH_CHECKPOINT_DISTANCE_M,
+        )
+    else:
+        raise ValueError(
+            f"Unknown TRACKING_MODE: '{tracking_mode}'. "
+            "Supported modes: 'ray', 'em_track_then_bvh'"
+        )
 
     # --- Handle Outputs, saving to the specified subfolder ---
-    output_dir_for_run = os.path.join(config.DETAILED_OUTPUT_DIR, output_subfolder)
-    
     if config.SAVE_PARAVIEW_FILES and any(save_details_flags):
         output.save_paraview_reports(original_meshes, deposited_power, object_names, save_details_flags, output_dir_for_run)
     if (config.SAVE_BINARY_POWERLOADS or config.SAVE_CSV_REPORTS) and any(save_details_flags):
@@ -140,7 +173,7 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
     if config.RUN_VISUALIZATION_AFTER_SIM:
         print("\nWARNING: Automatic visualization is disabled in the memory-safe workflow.")
         print("         Please use post_process.py to view results after the run completes.")
-        
+
     print(f"\n--- Finished Simulation for: '{os.path.basename(particle_source_file) if particle_source_file else 'fallback_run'}' ---")
 
     # --- NEW: Automatic call to the batch smoother ---

@@ -819,7 +819,7 @@ class SimGUI(tk.Tk):
             row=row, column=1, sticky="w", padx=(8, 0))
 
         row += 1
-        ttk.Label(card, text="Sources per worker (empty=auto):", style="Card.TLabel").grid(
+        ttk.Label(card, text="Sources per worker (legacy, unused):", style="Card.TLabel").grid(
             row=row, column=0, sticky="w", pady=5)
         spw = self.cfg.get("SOURCES_PER_WORKER")
         self.var_spw = tk.StringVar(value=str(spw) if spw is not None else "")
