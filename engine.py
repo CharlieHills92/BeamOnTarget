@@ -373,6 +373,7 @@ def run_simulation_em_track_then_bvh(
             """Run BVH on a checkpoint segment chunk; accumulate results; return hit PIDs."""
             sparse_chunk, imp_chunk, hit_pids = intersect_trajectory_segments_bvh(
                 segments_chunk, intersector, face_offsets, face_counts, deposition_model,
+                save_impact_flags=save_impact_flags,
             )
             _merge_into_all(sparse_chunk, imp_chunk)
             return hit_pids
@@ -395,6 +396,7 @@ def run_simulation_em_track_then_bvh(
         # Final BVH pass on the surviving segments (last checkpoint interval or all if no checkpoints)
         final_sparse, final_impacts, _ = intersect_trajectory_segments_bvh(
             trajectory_segments, intersector, face_offsets, face_counts, deposition_model,
+            save_impact_flags=save_impact_flags,
         )
         _merge_into_all(final_sparse, final_impacts)
 

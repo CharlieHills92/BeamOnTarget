@@ -12,6 +12,7 @@ def intersect_trajectory_segments_bvh(
     face_offsets,
     face_counts,
     deposition_model,
+    save_impact_flags=None,
 ):
     """
     Check trajectory segments against BVH and compute power deposition.
@@ -31,6 +32,8 @@ def intersect_trajectory_segments_bvh(
             impact_records: list of dicts per object with 'hit_count' and 'data'
     """
     num_objects = len(face_counts)
+    if save_impact_flags is None:
+        save_impact_flags = [False] * num_objects
     sparse_updates = [(None, None) for _ in face_counts]
     impact_records = [{'hit_count': 0, 'data': []} for _ in range(num_objects)]
 
@@ -151,9 +154,12 @@ def intersect_trajectory_segments_bvh(
                 np.asarray(unique_vals, dtype=np.float32),
             )
 
-        # Collect impact records (simplified: only store hit position and direction)
+        # Collect impact records only for flagged objects
         hit_count = int(mask.sum())
         impact_records[obj_idx]['hit_count'] += hit_count
+
+        if not save_impact_flags[obj_idx]:
+            continue
 
         local_hits = np.flatnonzero(mask)
         for h in local_hits:
