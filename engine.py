@@ -8,6 +8,7 @@ import trimesh
 import numpy as np
 import os
 import math
+import time
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from field_provider import create_field_provider
@@ -315,6 +316,8 @@ def run_simulation_em_track_then_bvh(
     if max_impact_records is None:
         max_impact_records = [None] * num_objects
 
+    perf_enabled = os.environ.get("BEAMONTARGET_PROFILE_TIMING", "").strip().lower() in {"1", "true", "yes", "on"}
+
     available_cores = os.cpu_count() or 1
     n_jobs = available_cores if (num_cpu_cores == -1) else max(1, int(num_cpu_cores))
     print("\nInitializing Two-Phase EM BVH simulation engine...")
@@ -345,6 +348,12 @@ def run_simulation_em_track_then_bvh(
     print("Processing particle batches (Phase 1 EM tracing + Phase 2 BVH)...")
 
     def _process_particle_batch_em(batch, seed):
+        perf_stats = {
+            "em_pure_s": 0.0,
+            "reaction_apply_s": 0.0,
+            "checkpoint_bvh_s": 0.0,
+            "final_bvh_s": 0.0,
+        }
         field_provider = create_field_provider(external_field_cfg)
         reaction_model = create_reaction_model(reaction_model_cfg)
 
@@ -391,13 +400,17 @@ def run_simulation_em_track_then_bvh(
             seed=seed,
             bvh_checkpoint_steps=bvh_checkpoint_steps,
             bvh_hit_callback=_bvh_checkpoint_callback if bvh_checkpoint_steps is not None else None,
+            perf_stats=perf_stats if perf_enabled else None,
         )
 
         # Final BVH pass on the surviving segments (last checkpoint interval or all if no checkpoints)
+        final_bvh_started_at = time.perf_counter()
         final_sparse, final_impacts, _ = intersect_trajectory_segments_bvh(
             trajectory_segments, intersector, face_offsets, face_counts, deposition_model,
             save_impact_flags=save_impact_flags,
         )
+        if perf_enabled:
+            perf_stats["final_bvh_s"] += time.perf_counter() - final_bvh_started_at
         _merge_into_all(final_sparse, final_impacts)
 
         # Consolidate duplicate triangle indices within each object
@@ -415,19 +428,29 @@ def run_simulation_em_track_then_bvh(
             np.add.at(u_vals, inv, vals_s)
             consolidated.append((u_idxs, u_vals))
 
-        return consolidated, all_impacts
+        return consolidated, all_impacts, perf_stats
+
+    perf_totals = {
+        "em_pure_s": 0.0,
+        "reaction_apply_s": 0.0,
+        "checkpoint_bvh_s": 0.0,
+        "final_bvh_s": 0.0,
+    }
 
     with ThreadPoolExecutor(max_workers=n_jobs) as executor:
         futures = [executor.submit(_process_particle_batch_em, batch, i)
                    for i, batch in enumerate(particle_batches)]
 
         for future in tqdm(as_completed(futures), total=len(futures), desc="Processing Particle Batches"):
-            sparse_updates, chunk_impacts = future.result()
+            sparse_updates, chunk_impacts, chunk_perf = future.result()
             for obj_idx, (idxs, vals) in enumerate(sparse_updates):
                 if idxs is None:
                     continue
                 np.add.at(final_deposited_power[obj_idx], idxs, vals)
             _merge_impact_records(impact_data, chunk_impacts, save_impact_flags, max_impact_records)
+            if perf_enabled:
+                for key in perf_totals:
+                    perf_totals[key] += chunk_perf.get(key, 0.0)
 
     total_deposited = sum(arr.sum() for arr in final_deposited_power)
     print(f"Total power deposited: {total_deposited:.2f} W")
@@ -436,6 +459,16 @@ def run_simulation_em_track_then_bvh(
         if save_impact_flags[obj_idx] and impact_data[obj_idx]['total_hits'] > 0:
             d = impact_data[obj_idx]
             print(f"  Impact data for object {obj_idx}: {d['stored_hits']} records stored out of {d['total_hits']} total hits.")
+
+    if perf_enabled:
+        total_traced = (perf_totals['em_pure_s'] + perf_totals['reaction_apply_s']
+                        + perf_totals['checkpoint_bvh_s'] + perf_totals['final_bvh_s'])
+        print("Performance timing summary (aggregated across worker batches):")
+        print(f"  - EM pure (Boris + bookkeeping): {perf_totals['em_pure_s']:.2f} s")
+        print(f"  - Reaction apply: {perf_totals['reaction_apply_s']:.2f} s")
+        print(f"  - BVH checkpoint callbacks: {perf_totals['checkpoint_bvh_s']:.2f} s")
+        print(f"  - Final BVH passes: {perf_totals['final_bvh_s']:.2f} s")
+        print(f"  - Total traced: {total_traced:.2f} s")
 
     return final_deposited_power, impact_data
 

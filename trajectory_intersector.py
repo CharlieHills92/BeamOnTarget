@@ -38,7 +38,7 @@ def intersect_trajectory_segments_bvh(
     impact_records = [{'hit_count': 0, 'data': []} for _ in range(num_objects)]
 
     if len(trajectory_segments) == 0:
-        return sparse_updates, impact_records
+        return sparse_updates, impact_records, set()
 
     # Keep only the earliest collision per particle after BVH testing.
 
@@ -53,35 +53,67 @@ def intersect_trajectory_segments_bvh(
     valid_segs = segment_lengths > 1e-14
     ray_directions[valid_segs] = segment_vectors[valid_segs] / segment_lengths[valid_segs][:, np.newaxis]
 
-    # BVH query
-    locations, index_ray, index_tri_global = intersector.intersects_location(
-        ray_origins=ray_origins,
-        ray_directions=ray_directions,
-        multiple_hits=False,
+    # BVH query — direct embree call with finite segment distances (dists).
+    # Embree internally uses float32, which has limited precision for large
+    # coordinates. Trimesh's _EmbreeWrap compensates by translating the
+    # geometry so that min(vertices) maps to the origin, and then scaling
+    # the result to maximise float32 precision. Ray origins and max-ray
+    # distances (dists) must undergo the same transform so that they are
+    # consistent with the stored BVH.
+    #
+    # By passing dists (= segment_length * scale), embree rejects triangles
+    # beyond the segment during BVH traversal. This avoids shooting infinite
+    # rays and post-filtering hits that fall outside the actual EM step.
+    scene_wrap = intersector._scene
+    scale = scene_wrap.scale
+    scene_origin = scene_wrap.origin
+
+    # Transform ray origins into embree's scaled coordinate system
+    scaled_origins = (ray_origins - scene_origin) * scale
+    # Transform segment lengths into the same scaled space; a small epsilon
+    # is added because embree's tfar bound is exclusive (hit at exactly
+    # tfar is not reported)
+    scaled_dists = (segment_lengths + 1e-9) * scale
+
+    # Query embree: returns triangle index per ray (-1 for miss)
+    tri_ids = scene_wrap.scene.run(
+        scaled_origins.astype(np.float32),
+        ray_directions.astype(np.float32),
+        dists=scaled_dists.astype(np.float32),
     )
 
-    if len(locations) == 0:
+    hit_mask = tri_ids != -1
+    if not np.any(hit_mask):
         return sparse_updates, impact_records, set()
 
-    # Validate hits are within segment length
-    impact_vec = locations - ray_origins[index_ray]
-    impact_dist = np.linalg.norm(impact_vec, axis=1)
-    allowed = impact_dist <= (segment_lengths[index_ray] + 1e-9)
+    index_ray = np.where(hit_mask)[0]
+    index_tri_global = tri_ids[hit_mask]
 
-    if not np.any(allowed):
-        return sparse_updates, impact_records, set()
+    # Compute hit locations via ray-plane intersection:
+    # t = dot(v0 - origin, normal) / dot(direction, normal)
+    # location = origin + t * direction
+    mesh = intersector.mesh
+    hit_origins = ray_origins[index_ray]
+    hit_dirs = ray_directions[index_ray]
+    tri_v0 = mesh.triangles[index_tri_global, 0, :]
+    tri_normals = mesh.face_normals[index_tri_global]
 
-    # Process allowed hits
-    hit_ray_indices = index_ray[allowed]
-    hit_tri_global = index_tri_global[allowed]
-    hit_positions = locations[allowed]
+    t_num = np.einsum('ij,ij->i', tri_v0 - hit_origins, tri_normals)
+    t_den = np.einsum('ij,ij->i', hit_dirs, tri_normals)
+    # Avoid division by zero for degenerate cases
+    safe_den = np.where(np.abs(t_den) > 1e-30, t_den, 1e-30)
+    t = t_num / safe_den
+    locations = hit_origins + t[:, np.newaxis] * hit_dirs
 
-    hit_particle_ids = trajectory_segments['particle_id'][hit_ray_indices]
-    hit_step_indices = trajectory_segments['step_index'][hit_ray_indices]
+    # Compute impact distances for earliest-hit selection
+    impact_dist = np.abs(t)
 
-    keep_mask = np.zeros(hit_ray_indices.shape[0], dtype=bool)
+    hit_particle_ids = trajectory_segments['particle_id'][index_ray]
+    hit_step_indices = trajectory_segments['step_index'][index_ray]
+
+    keep_mask = np.zeros(index_ray.shape[0], dtype=bool)
     earliest_hits = {}
-    for idx, (particle_id, step_index, distance) in enumerate(zip(hit_particle_ids, hit_step_indices, impact_dist[allowed])):
+    for idx, (particle_id, step_index, distance) in enumerate(zip(hit_particle_ids, hit_step_indices, impact_dist)):
         current = earliest_hits.get(int(particle_id))
         candidate = (int(step_index), float(distance), idx)
         if current is None or candidate[:2] < current[:2]:
@@ -89,12 +121,12 @@ def intersect_trajectory_segments_bvh(
     for _, (_, _, idx) in earliest_hits.items():
         keep_mask[idx] = True
 
-    hit_ray_indices = hit_ray_indices[keep_mask]
-    hit_tri_global = hit_tri_global[keep_mask]
-    hit_positions = hit_positions[keep_mask]
+    index_ray = index_ray[keep_mask]
+    index_tri_global = index_tri_global[keep_mask]
+    hit_positions = locations[keep_mask]
 
     # Extract particle properties at hit
-    hit_segments = trajectory_segments[hit_ray_indices]
+    hit_segments = trajectory_segments[index_ray]
     hit_velocities = hit_segments['velocity']
     hit_masses = hit_segments['mass_kg']
     hit_charges = hit_segments['charge_state']
@@ -113,8 +145,8 @@ def intersect_trajectory_segments_bvh(
     deposit = power * frac
 
     # Map to objects
-    object_indices = np.searchsorted(face_offsets, hit_tri_global, side='right') - 1
-    local_tri_indices = hit_tri_global - face_offsets[object_indices]
+    object_indices = np.searchsorted(face_offsets, index_tri_global, side='right') - 1
+    local_tri_indices = index_tri_global - face_offsets[object_indices]
 
     # Build sparse updates per object
     for obj_idx in np.unique(object_indices):
@@ -180,6 +212,6 @@ def intersect_trajectory_segments_bvh(
                 float(hit_currents[h]),
             ))
 
-    # hit_ray_indices is already filtered to earliest-hit-per-particle at this point
-    hit_pids = set(int(p) for p in trajectory_segments['particle_id'][hit_ray_indices])
+    # index_ray is already filtered to earliest-hit-per-particle at this point
+    hit_pids = set(int(p) for p in trajectory_segments['particle_id'][index_ray])
     return sparse_updates, impact_records, hit_pids

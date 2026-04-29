@@ -4,6 +4,7 @@ import os
 import numpy as np
 from constants import ELEMENTARY_CHARGE_C
 import cross_sections
+from scipy.interpolate import interp1d
 
 
 class ReactionModel:
@@ -37,6 +38,7 @@ class BeamCrossSectionReaction(ReactionModel):
         background_density_m3=0.0,
         density_profile_file=None,
         density_profile_direction=(1.0, 0.0, 0.0),
+        fixed_cs=False,
     ):
         self.isotope = str(isotope).strip().upper()
         self.background_density_m3 = float(background_density_m3)
@@ -45,6 +47,8 @@ class BeamCrossSectionReaction(ReactionModel):
         self.density_profile_positions_m = None
         self.density_profile_values_m3 = None
         self.density_profile_direction = self._normalize_direction(density_profile_direction)
+        self.fixed_cs = bool(fixed_cs)
+        self._cached_sigmas = None   # populated on first apply() call when fixed_cs=True
 
         if density_profile_file:
             self._load_density_profile(density_profile_file)
@@ -121,6 +125,14 @@ class BeamCrossSectionReaction(ReactionModel):
         self.density_profile_positions_m = uniq_pos
         self.density_profile_values_m3 = uniq_den
 
+        # Build the interpolator once (reused by every _density_at_positions call)
+        self._density_interp = interp1d(
+            uniq_pos, uniq_den,
+            kind='linear',
+            fill_value=(uniq_den[0], uniq_den[-1]),
+            bounds_error=False,
+        )
+
     def _print_configuration_summary(self):
         direction_str = np.array2string(self.density_profile_direction, precision=6)
         if self.density_profile_positions_m is None:
@@ -147,15 +159,9 @@ class BeamCrossSectionReaction(ReactionModel):
     def _density_at_positions(self, positions_m):
         if self.density_profile_positions_m is None:
             return np.full(len(positions_m), self.background_density_m3, dtype=np.float64)
-
+        # Project positions onto the profile direction to get coordinate s, then interpolate density at s.
         s = np.einsum("ij,j->i", np.asarray(positions_m, dtype=np.float64), self.density_profile_direction)
-        return np.interp(
-            s,
-            self.density_profile_positions_m,
-            self.density_profile_values_m3,
-            left=self.density_profile_values_m3[0],
-            right=self.density_profile_values_m3[-1],
-        )
+        return self._density_interp(s)
 
     def apply(self, species_frame, positions_m, velocities_mps, dt_s, rng):
         if self.background_density_m3 <= 0.0 and self.density_profile_positions_m is None:
@@ -165,7 +171,7 @@ class BeamCrossSectionReaction(ReactionModel):
         if n == 0:
             return
 
-        speed = np.linalg.norm(velocities_mps, axis=1)
+        speed = np.sqrt(np.maximum(np.einsum('ij,ij->i', velocities_mps, velocities_mps), 0.0))
         if not np.any(speed > 0.0):
             return
 
@@ -174,13 +180,28 @@ class BeamCrossSectionReaction(ReactionModel):
 
         density_m3 = self._density_at_positions(positions_m)
 
-        probs = cross_sections.channel_probabilities(
-            energy_ev=energy_ev,
-            speed_mps=speed,
-            dt_s=dt_s,
-            background_density_m3=density_m3,
-            isotope=self.isotope,
-        )
+        if self.fixed_cs:
+            # Compute cross-sections once at mean initial energy (scalar), reuse on subsequent calls.
+            # Using mean energy produces scalar sigmas that broadcast with any batch size.
+            if self._cached_sigmas is None:
+                mean_energy = float(np.mean(energy_ev))
+                self._cached_sigmas = cross_sections.channel_cross_sections(
+                    energy_ev=mean_energy, isotope=self.isotope,
+                )
+            sigmas = self._cached_sigmas
+            # Compute probabilities from cached sigmas: rate = sigma * speed * density
+            probs = {}
+            for k, sigma in sigmas.items():
+                rate = np.asarray(sigma, dtype=np.float64) * speed * density_m3
+                probs[k] = 1.0 - np.exp(-rate * np.asarray(dt_s, dtype=np.float64))
+        else:
+            probs = cross_sections.channel_probabilities(
+                energy_ev=energy_ev,
+                speed_mps=speed,
+                dt_s=dt_s,
+                background_density_m3=density_m3,
+                isotope=self.isotope,
+            )
 
         charge = species_frame.charge_state_e
         initial_charge = charge.copy()
@@ -257,6 +278,7 @@ def create_reaction_model(config_dict=None):
             background_density_m3=cfg.get("background_density_m3", 0.0),
             density_profile_file=cfg.get("density_profile_file", None),
             density_profile_direction=density_direction,
+            fixed_cs=cfg.get("fixed_cs", False),
         )
 
     raise ValueError(f"Unknown REACTION_MODEL type: {model_type}")

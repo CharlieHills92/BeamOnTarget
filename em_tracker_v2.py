@@ -3,9 +3,11 @@ EM particle tracing (Phase 1) — Boris integration without geometry intersectio
 Outputs trajectory segments for deferred BVH checking in Phase 2.
 """
 
+import time
+
 import numpy as np
 from constants import ELEMENTARY_CHARGE_C
-from species import build_species_frame
+from species import SpeciesFrame, build_species_frame
 
 
 SEGMENT_DTYPE = [
@@ -52,6 +54,7 @@ def trace_particle_batch_em_only(
     seed=None,
     bvh_checkpoint_steps=None,
     bvh_hit_callback=None,
+    perf_stats=None,
 ):
     """
     Trace particles using EM integration ONLY (no mesh checks).
@@ -76,6 +79,7 @@ def trace_particle_batch_em_only(
             - current_a (float64): particle beam current
             - source_index (int32): source that generated particle
     """
+    trace_started_at = time.perf_counter()
     rng = np.random.default_rng(seed)
 
     if particle_batch["origins"].size == 0:
@@ -90,6 +94,10 @@ def trace_particle_batch_em_only(
     charge_states = particle_batch["charge_states"].astype(np.int32, copy=True)
 
     species = build_species_frame(mass_kg=masses, charge_state_e=charge_states)
+    reaction_species_frame = SpeciesFrame(
+        mass_kg=np.empty(0, dtype=np.float64),
+        charge_state_e=np.empty(0, dtype=np.int32),
+    )
 
     speeds = np.sqrt((2.0 * np.maximum(energies_ev, 0.0) * ELEMENTARY_CHARGE_C) / np.maximum(species.mass_kg, 1e-30))
     velocities = directions * speeds[:, np.newaxis]
@@ -129,7 +137,10 @@ def trace_particle_batch_em_only(
         chunk['kinetic_energy_ev'] = np.concatenate(seg_eev)
         chunk['current_a']         = np.concatenate(seg_cur)
         chunk['source_index']      = np.concatenate(seg_src)
+        callback_started_at = time.perf_counter()
         hit_pids = bvh_hit_callback(chunk)
+        if perf_stats is not None:
+            perf_stats["checkpoint_bvh_s"] += time.perf_counter() - callback_started_at
         # clear accumulators
         for lst in (seg_pid, seg_sidx, seg_spos, seg_epos, seg_vel,
                     seg_mass, seg_cs, seg_eev, seg_cur, seg_src):
@@ -210,18 +221,19 @@ def trace_particle_batch_em_only(
         if still_active_idx.size > 0:
             # Reuse dt[live_mask] — Boris conserves speed so dt is unchanged after push
             dt_live = dt[live_mask]
-            temp_frame = build_species_frame(
-                species.mass_kg[still_active_idx],
-                species.charge_state_e[still_active_idx],
-            )
+            reaction_species_frame.mass_kg = species.mass_kg[still_active_idx]
+            reaction_species_frame.charge_state_e = species.charge_state_e[still_active_idx].copy()
+            reaction_started_at = time.perf_counter()
             reaction_model.apply(
-                species_frame=temp_frame,
+                species_frame=reaction_species_frame,
                 positions_m=positions[still_active_idx],
                 velocities_mps=velocities[still_active_idx],
                 dt_s=dt_live,
                 rng=rng,
             )
-            species.charge_state_e[still_active_idx] = temp_frame.charge_state_e
+            if perf_stats is not None:
+                perf_stats["reaction_apply_s"] += time.perf_counter() - reaction_started_at
+            species.charge_state_e[still_active_idx] = reaction_species_frame.charge_state_e
 
             if em_max_distance_m is not None:
                 active[still_active_idx[travel_distance[still_active_idx] >= em_max_distance_m]] = False
@@ -254,4 +266,9 @@ def trace_particle_batch_em_only(
     out['kinetic_energy_ev'] = np.concatenate(seg_eev)
     out['current_a']         = np.concatenate(seg_cur)
     out['source_index']      = np.concatenate(seg_src)
+    if perf_stats is not None:
+        elapsed = time.perf_counter() - trace_started_at
+        # Pure EM time = total elapsed minus reaction and checkpoint time
+        # (which are already accumulated separately inside this function)
+        perf_stats["em_pure_s"] += elapsed - perf_stats["reaction_apply_s"] - perf_stats["checkpoint_bvh_s"]
     return out

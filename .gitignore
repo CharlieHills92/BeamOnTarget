@@ -2,7 +2,9 @@ venv/
 __pycache__/
 *.pyc
 OUTPUT/
+OUTPUT_BENCH/
 geometry_cache/
+geometry_cache_real/
 DUMMY/
 .pv_temp_script.py
 build/
