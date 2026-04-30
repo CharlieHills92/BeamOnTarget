@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Neutral beam particle deposition simulation and analysis tool"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "numpy>=1.26",
     "trimesh>=3.23",
