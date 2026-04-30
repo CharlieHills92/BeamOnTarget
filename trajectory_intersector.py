@@ -6,6 +6,46 @@ Takes trajectory segments from Phase 1 and finds first hits against geometry.
 import numpy as np
 
 
+def _build_sparse_updates(object_indices, local_tri_indices, deposit, num_objects):
+    """Build per-object sparse (face_index, power_value) arrays from hit data."""
+    sparse = [(None, None) for _ in range(num_objects)]
+    if len(deposit) == 0:
+        return sparse
+    for obj_idx in np.unique(object_indices):
+        mask = object_indices == obj_idx
+        idxs = local_tri_indices[mask]
+        vals = deposit[mask]
+        if idxs.size > 0:
+            order = np.argsort(idxs)
+            idxs_sorted = idxs[order]
+            vals_sorted = vals[order]
+            unique_idxs = []
+            unique_vals = []
+            prev = None
+            acc = 0.0
+            for i in range(idxs_sorted.size):
+                ii = int(idxs_sorted[i])
+                vv = float(vals_sorted[i])
+                if prev is None:
+                    prev = ii
+                    acc = vv
+                elif ii == prev:
+                    acc += vv
+                else:
+                    unique_idxs.append(prev)
+                    unique_vals.append(acc)
+                    prev = ii
+                    acc = vv
+            if prev is not None:
+                unique_idxs.append(prev)
+                unique_vals.append(acc)
+            sparse[obj_idx] = (
+                np.asarray(unique_idxs, dtype=np.int32),
+                np.asarray(unique_vals, dtype=np.float32),
+            )
+    return sparse
+
+
 def intersect_trajectory_segments_bvh(
     trajectory_segments,
     intersector,
@@ -38,7 +78,7 @@ def intersect_trajectory_segments_bvh(
     impact_records = [{'hit_count': 0, 'data': []} for _ in range(num_objects)]
 
     if len(trajectory_segments) == 0:
-        return sparse_updates, impact_records, set()
+        return sparse_updates, impact_records, set(), {}
 
     # Keep only the earliest collision per particle after BVH testing.
 
@@ -84,7 +124,7 @@ def intersect_trajectory_segments_bvh(
 
     hit_mask = tri_ids != -1
     if not np.any(hit_mask):
-        return sparse_updates, impact_records, set()
+        return sparse_updates, impact_records, set(), {}
 
     index_ray = np.where(hit_mask)[0]
     index_tri_global = tri_ids[hit_mask]
@@ -148,45 +188,20 @@ def intersect_trajectory_segments_bvh(
     object_indices = np.searchsorted(face_offsets, index_tri_global, side='right') - 1
     local_tri_indices = index_tri_global - face_offsets[object_indices]
 
-    # Build sparse updates per object
+    # Build total sparse updates per object
+    sparse_updates = _build_sparse_updates(object_indices, local_tri_indices, deposit, num_objects)
+
+    # Build per-species sparse updates (keyed by charge_state)
+    sparse_by_species = {}
+    for cs in np.unique(hit_charges):
+        cs_mask = hit_charges == cs
+        sparse_by_species[int(cs)] = _build_sparse_updates(
+            object_indices[cs_mask], local_tri_indices[cs_mask], deposit[cs_mask], num_objects,
+        )
+
+    # Collect impact records for flagged objects
     for obj_idx in np.unique(object_indices):
         mask = object_indices == obj_idx
-        idxs = local_tri_indices[mask]
-        vals = deposit[mask]
-
-        if idxs.size > 0:
-            # Sort and combine duplicates
-            order = np.argsort(idxs)
-            idxs_sorted = idxs[order]
-            vals_sorted = vals[order]
-
-            unique_idxs = []
-            unique_vals = []
-            prev = None
-            acc = 0.0
-            for i in range(idxs_sorted.size):
-                ii = int(idxs_sorted[i])
-                vv = float(vals_sorted[i])
-                if prev is None:
-                    prev = ii
-                    acc = vv
-                elif ii == prev:
-                    acc += vv
-                else:
-                    unique_idxs.append(prev)
-                    unique_vals.append(acc)
-                    prev = ii
-                    acc = vv
-            if prev is not None:
-                unique_idxs.append(prev)
-                unique_vals.append(acc)
-
-            sparse_updates[obj_idx] = (
-                np.asarray(unique_idxs, dtype=np.int32),
-                np.asarray(unique_vals, dtype=np.float32),
-            )
-
-        # Collect impact records only for flagged objects
         hit_count = int(mask.sum())
         impact_records[obj_idx]['hit_count'] += hit_count
 
@@ -214,4 +229,4 @@ def intersect_trajectory_segments_bvh(
 
     # index_ray is already filtered to earliest-hit-per-particle at this point
     hit_pids = set(int(p) for p in trajectory_segments['particle_id'][index_ray])
-    return sparse_updates, impact_records, hit_pids
+    return sparse_updates, impact_records, hit_pids, sparse_by_species

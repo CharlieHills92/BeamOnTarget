@@ -112,6 +112,7 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
             save_impact_flags=save_impact_flags_per_mesh,
             max_impact_records=max_impact_records_per_mesh,
         )
+        per_species_power = {}  # not available in ray mode
     elif tracking_mode == "em_track_then_bvh":
         reaction_model_cfg = dict(config.REACTION_MODEL or {})
         reaction_model_cfg.setdefault(
@@ -127,7 +128,7 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
             output_dir_for_run=output_dir_for_run,
             em_step_length_m=config.EM_STEP_LENGTH_M,
         )
-        deposited_power, impact_data = engine.run_simulation_em_track_then_bvh(
+        deposited_power, impact_data, per_species_power = engine.run_simulation_em_track_then_bvh(
             scene_mesh,
             face_offsets,
             face_counts,
@@ -155,10 +156,12 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
 
     # --- Handle Outputs, saving to the specified subfolder ---
     if config.SAVE_PARAVIEW_FILES and any(save_details_flags):
-        output.save_paraview_reports(original_meshes, deposited_power, object_names, save_details_flags, output_dir_for_run)
+        output.save_paraview_reports(original_meshes, deposited_power, object_names, save_details_flags,
+                                     output_dir_for_run, per_species_power=per_species_power or None)
     if (config.SAVE_BINARY_POWERLOADS or config.SAVE_CSV_REPORTS) and any(save_details_flags):
         output.save_detailed_reports(original_meshes, deposited_power, object_names, save_details_flags, output_dir_for_run,
-            save_binary=config.SAVE_BINARY_POWERLOADS, save_csv=config.SAVE_CSV_REPORTS)
+            save_binary=config.SAVE_BINARY_POWERLOADS, save_csv=config.SAVE_CSV_REPORTS,
+            per_species_power=per_species_power or None)
     if config.SUMMARY_CSV_FILENAME:
         # We can also put the summary in the subfolder to keep results together
         summary_filename = f"summary_{output_subfolder}.csv"

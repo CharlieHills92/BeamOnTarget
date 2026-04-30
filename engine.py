@@ -343,6 +343,7 @@ def run_simulation_em_track_then_bvh(
     particle_batches = list(_iter_particle_batches(particle_sources_list, particle_batch_size))
 
     final_deposited_power = [np.zeros(count, dtype=np.float32) for count in face_counts]
+    per_species_power = {}  # {charge_state: [np.zeros per object]}
     impact_data = _empty_impact_data(num_objects)
 
     print("Processing particle batches (Phase 1 EM tracing + Phase 2 BVH)...")
@@ -360,31 +361,40 @@ def run_simulation_em_track_then_bvh(
         # Accumulated sparse updates and impact records across all checkpoint passes
         all_sparse = [(None, None) for _ in face_counts]
         all_impacts = [{'hit_count': 0, 'data': []} for _ in range(num_objects)]
+        # Per-species sparse updates: {charge_state: [(idxs, vals) per object]}
+        all_sparse_by_species = {}
 
-        def _merge_into_all(sparse_chunk, imp_chunk):
-            for obj_idx, (idxs, vals) in enumerate(sparse_chunk):
+        def _merge_sparse_list(target, source):
+            for obj_idx, (idxs, vals) in enumerate(source):
                 if idxs is None:
                     continue
-                prev_idxs, prev_vals = all_sparse[obj_idx]
+                prev_idxs, prev_vals = target[obj_idx]
                 if prev_idxs is None:
-                    all_sparse[obj_idx] = (idxs, vals)
+                    target[obj_idx] = (idxs, vals)
                 else:
-                    all_sparse[obj_idx] = (
+                    target[obj_idx] = (
                         np.concatenate([prev_idxs, idxs]),
                         np.concatenate([prev_vals, vals]),
                     )
+
+        def _merge_into_all(sparse_chunk, imp_chunk, species_chunk):
+            _merge_sparse_list(all_sparse, sparse_chunk)
             for obj_idx in range(num_objects):
                 c = imp_chunk[obj_idx]
                 all_impacts[obj_idx]['hit_count'] += c['hit_count']
                 all_impacts[obj_idx]['data'].extend(c['data'])
+            for cs, sp_list in species_chunk.items():
+                if cs not in all_sparse_by_species:
+                    all_sparse_by_species[cs] = [(None, None) for _ in face_counts]
+                _merge_sparse_list(all_sparse_by_species[cs], sp_list)
 
         def _bvh_checkpoint_callback(segments_chunk):
             """Run BVH on a checkpoint segment chunk; accumulate results; return hit PIDs."""
-            sparse_chunk, imp_chunk, hit_pids = intersect_trajectory_segments_bvh(
+            sparse_chunk, imp_chunk, hit_pids, species_chunk = intersect_trajectory_segments_bvh(
                 segments_chunk, intersector, face_offsets, face_counts, deposition_model,
                 save_impact_flags=save_impact_flags,
             )
-            _merge_into_all(sparse_chunk, imp_chunk)
+            _merge_into_all(sparse_chunk, imp_chunk, species_chunk)
             return hit_pids
 
         trajectory_segments = trace_particle_batch_em_only(
@@ -405,13 +415,13 @@ def run_simulation_em_track_then_bvh(
 
         # Final BVH pass on the surviving segments (last checkpoint interval or all if no checkpoints)
         final_bvh_started_at = time.perf_counter()
-        final_sparse, final_impacts, _ = intersect_trajectory_segments_bvh(
+        final_sparse, final_impacts, _, final_species = intersect_trajectory_segments_bvh(
             trajectory_segments, intersector, face_offsets, face_counts, deposition_model,
             save_impact_flags=save_impact_flags,
         )
         if perf_enabled:
             perf_stats["final_bvh_s"] += time.perf_counter() - final_bvh_started_at
-        _merge_into_all(final_sparse, final_impacts)
+        _merge_into_all(final_sparse, final_impacts, final_species)
 
         # Consolidate duplicate triangle indices within each object
         consolidated = []
@@ -428,7 +438,25 @@ def run_simulation_em_track_then_bvh(
             np.add.at(u_vals, inv, vals_s)
             consolidated.append((u_idxs, u_vals))
 
-        return consolidated, all_impacts, perf_stats
+        # Consolidate per-species sparse updates
+        consolidated_by_species = {}
+        for cs, sp_list in all_sparse_by_species.items():
+            cons = []
+            for obj_idx in range(num_objects):
+                idxs, vals = sp_list[obj_idx]
+                if idxs is None or idxs.size == 0:
+                    cons.append((None, None))
+                    continue
+                order = np.argsort(idxs)
+                idxs_s = idxs[order]
+                vals_s = vals[order]
+                u_idxs, inv = np.unique(idxs_s, return_inverse=True)
+                u_vals = np.zeros(u_idxs.size, dtype=np.float32)
+                np.add.at(u_vals, inv, vals_s)
+                cons.append((u_idxs, u_vals))
+            consolidated_by_species[cs] = cons
+
+        return consolidated, all_impacts, perf_stats, consolidated_by_species
 
     perf_totals = {
         "em_pure_s": 0.0,
@@ -442,11 +470,19 @@ def run_simulation_em_track_then_bvh(
                    for i, batch in enumerate(particle_batches)]
 
         for future in tqdm(as_completed(futures), total=len(futures), desc="Processing Particle Batches"):
-            sparse_updates, chunk_impacts, chunk_perf = future.result()
+            sparse_updates, chunk_impacts, chunk_perf, chunk_species = future.result()
             for obj_idx, (idxs, vals) in enumerate(sparse_updates):
                 if idxs is None:
                     continue
                 np.add.at(final_deposited_power[obj_idx], idxs, vals)
+            # Accumulate per-species power
+            for cs, sp_list in chunk_species.items():
+                if cs not in per_species_power:
+                    per_species_power[cs] = [np.zeros(count, dtype=np.float32) for count in face_counts]
+                for obj_idx, (idxs, vals) in enumerate(sp_list):
+                    if idxs is None:
+                        continue
+                    np.add.at(per_species_power[cs][obj_idx], idxs, vals)
             _merge_impact_records(impact_data, chunk_impacts, save_impact_flags, max_impact_records)
             if perf_enabled:
                 for key in perf_totals:
@@ -454,6 +490,14 @@ def run_simulation_em_track_then_bvh(
 
     total_deposited = sum(arr.sum() for arr in final_deposited_power)
     print(f"Total power deposited: {total_deposited:.2f} W")
+    if per_species_power:
+        for cs in sorted(per_species_power.keys()):
+            sp_total = sum(arr.sum() for arr in per_species_power[cs])
+            label = {-1: "H-", 0: "H0", 1: "H+"}.get(cs, f"q={cs}")
+            if total_deposited > 0:
+                print(f"  Species {label}: {sp_total:.2f} W ({100*sp_total/total_deposited:.1f}%)")
+            else:
+                print(f"  Species {label}: {sp_total:.2f} W")
 
     for obj_idx in range(num_objects):
         if save_impact_flags[obj_idx] and impact_data[obj_idx]['total_hits'] > 0:
@@ -470,7 +514,7 @@ def run_simulation_em_track_then_bvh(
         print(f"  - Final BVH passes: {perf_totals['final_bvh_s']:.2f} s")
         print(f"  - Total traced: {total_traced:.2f} s")
 
-    return final_deposited_power, impact_data
+    return final_deposited_power, impact_data, per_species_power
 
 
 
