@@ -114,41 +114,65 @@ def visualize_setup(grouped_meshes, particle_sources, geometry_folders_config, s
     print("Showing interactive setup plot. Close the window to continue.")
     plotter.show()
 
-def save_summary_to_csv(original_meshes, deposited_power, object_names, outfile):
-    """Write per-object summary to a CSV file."""
+def save_summary_to_csv(original_meshes, deposited_power, object_names, outfile,
+                        per_species_power=None):
+    """Write per-object summary to a CSV file.
+
+    When *per_species_power* is provided the CSV includes additional columns
+    for each species: total_deposited_power_W_<label> and
+    peak_power_density_W_m2_<label>.
+    """
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
     print(f"\nSaving object power summary to '{outfile}'...")
+
+    species_keys = sorted(per_species_power.keys()) if per_species_power else []
+
     summary_data = []
     
     for i, mesh in enumerate(original_meshes):
         power_array = deposited_power[i]
         
-        # --- THIS IS THE KEY FIX ---
-        # Calculate power density on the full, original mesh data
         face_areas = mesh.area_faces
         power_density = np.divide(power_array, face_areas, out=np.full_like(power_array, np.nan), where=face_areas > 0)
         
-        # Now, create a mask of valid, finite density values
         valid_mask = np.isfinite(power_density)
         
-        # Calculate stats using ONLY the valid data
         if np.any(valid_mask):
             peak_density = np.max(power_density[valid_mask])
         else:
-            peak_density = 0.0 # No valid data to find a peak from
+            peak_density = 0.0
             
-        # Total power is the sum of all power, regardless of density calculation
         total_power = np.sum(power_array)
         
-        summary_data.append({
+        row = {
             'object_name': object_names[i],
             'total_deposited_power_W': total_power,
             'peak_power_density_W_m2': peak_density
-        })
+        }
+
+        for cs in species_keys:
+            label = _SPECIES_LABELS.get(cs, f"q{cs}")
+            sp_arr = per_species_power[cs][i]
+            sp_total = float(np.sum(sp_arr))
+            sp_dens = np.divide(sp_arr, face_areas,
+                                out=np.full_like(sp_arr, np.nan),
+                                where=face_areas > 0)
+            sp_valid = np.isfinite(sp_dens)
+            sp_peak = float(np.max(sp_dens[sp_valid])) if np.any(sp_valid) else 0.0
+            row[f'total_deposited_power_W_{label}'] = sp_total
+            row[f'peak_power_density_W_m2_{label}'] = sp_peak
+
+        summary_data.append(row)
         
     df = pd.DataFrame(summary_data)
-    df['total_deposited_power_W'] = df['total_deposited_power_W'].apply(lambda x: f'{x:.4e}')
-    df['peak_power_density_W_m2'] = df['peak_power_density_W_m2'].apply(lambda x: f'{x:.4e}')
+    fmt_cols = ['total_deposited_power_W', 'peak_power_density_W_m2']
+    for cs in species_keys:
+        label = _SPECIES_LABELS.get(cs, f"q{cs}")
+        fmt_cols.append(f'total_deposited_power_W_{label}')
+        fmt_cols.append(f'peak_power_density_W_m2_{label}')
+    for c in fmt_cols:
+        if c in df.columns:
+            df[c] = df[c].apply(lambda x: f'{x:.4e}')
     df.to_csv(outfile, index=False)
     print("Summary save complete.")
 

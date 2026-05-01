@@ -65,7 +65,6 @@ def _build_dict():
         "PARTICLE_SOURCE_DIR": PARTICLE_SOURCE_DIR,
         "NUM_PARTICLES_PER_BEAMLET": NUM_PARTICLES_PER_BEAMLET,
         "BEAMLET_RADIUS_M": _BEAMLET_RADIUS_M,
-        "SOURCES_PER_WORKER": SOURCES_PER_WORKER,
         "PARTICLE_BATCH_SIZE": PARTICLE_BATCH_SIZE,
         "TRACKING_MODE": TRACKING_MODE,
         "EM_STEP_LENGTH_M": EM_STEP_LENGTH_M,
@@ -118,8 +117,6 @@ def _apply(d):
     npb = g["NUM_PARTICLES_PER_BEAMLET"]
     batch = d.get("PARTICLE_BATCH_SIZE", 2_500_000)
     g["PARTICLE_BATCH_SIZE"]        = batch
-    spw = d.get("SOURCES_PER_WORKER", None)
-    g["SOURCES_PER_WORKER"]         = spw
 
     g["TRACKING_MODE"]              = d.get("TRACKING_MODE", "ray")
     g["EM_STEP_LENGTH_M"]           = d.get("EM_STEP_LENGTH_M", 0.02)

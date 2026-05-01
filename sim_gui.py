@@ -20,9 +20,10 @@ import shlex
 import matplotlib
 matplotlib.use("Agg")  # non-interactive backend; we blit to Tk canvases
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 from PIL import Image, ImageTk
+import numpy as np
 
 import viewer  # built-in Open3D viewer
 from config import load_config, save_config
@@ -240,8 +241,8 @@ class SimGUI(tk.Tk):
         self.minsize(860, 640)
         self.cfg = load_config(self._active_config_path)
         self._apply_theme()
-        self._build_ui()
         self._build_statusbar()
+        self._build_ui()
 
         self.deiconify()
         self.lift()
@@ -469,6 +470,8 @@ class SimGUI(tk.Tk):
         self._build_general_tab(notebook)
         self._build_geometry_tab(notebook)
         self._build_particles_tab(notebook)
+        self._build_fields_tab(notebook)
+        self._build_reactions_tab(notebook)
         self._build_output_tab(notebook)
         self._build_run_tab(notebook)
         self._build_results_tab(notebook)
@@ -516,6 +519,99 @@ class SimGUI(tk.Tk):
     def _build_general_tab(self, nb):
         outer = ttk.Frame(nb)
         nb.add(outer, text="  ⚙  General  ")
+
+        # --- Tracking Method card ---
+        method_card = self._make_card(outer, "Tracking Method", pady=(12, 10))
+
+        row = 0
+        ttk.Label(method_card, text="Method:", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=5)
+        raw_mode = self.cfg.get("TRACKING_MODE", "ray")
+        initial_mode = "EM Tracing" if raw_mode == "em_track_then_bvh" else "Ray Tracing"
+        self.var_tracking_mode = tk.StringVar(value=initial_mode)
+        mode_frame = ttk.Frame(method_card, style="Card.TFrame")
+        mode_combo = ttk.Combobox(mode_frame, textvariable=self.var_tracking_mode,
+                                   values=["Ray Tracing", "EM Tracing"],
+                                   state="readonly", width=20)
+        mode_combo.pack(side="left")
+
+        rm = self.cfg.get("REACTION_MODEL", {})
+        reactions_on = rm.get("type", "none") not in ("none", "off", "null")
+        self.var_reactions_enabled = tk.BooleanVar(value=reactions_on and raw_mode == "em_track_then_bvh")
+        self._reactions_check = ttk.Checkbutton(
+            mode_frame, text="Enable reactions",
+            variable=self.var_reactions_enabled, style="Card.TCheckbutton")
+        self._reactions_check.pack(side="left", padx=(16, 0))
+
+        mode_frame.grid(row=row, column=1, sticky="w", padx=(8, 0))
+
+        def _on_mode_change(*_):
+            is_em = self.var_tracking_mode.get() == "EM Tracing"
+            state = "normal" if is_em else "disabled"
+            self._reactions_check.configure(state=state)
+            if not is_em:
+                self.var_reactions_enabled.set(False)
+            for child in self._em_card.winfo_children():
+                try:
+                    child.configure(state=state)
+                except tk.TclError:
+                    pass
+
+        self.var_tracking_mode.trace_add("write", _on_mode_change)
+
+        row += 1
+        ttk.Label(method_card, text="Bounding box min (m):", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=4)
+        bbox_min = self.cfg.get("EM_BOUNDING_BOX_MIN_CORNER_M") or [0.0, -0.5, -1.3]
+        self.var_bbox_min = tk.StringVar(value=f"{bbox_min[0]}, {bbox_min[1]}, {bbox_min[2]}")
+        ttk.Entry(method_card, textvariable=self.var_bbox_min, width=24).grid(
+            row=row, column=1, sticky="w", padx=(8, 0))
+
+        row += 1
+        ttk.Label(method_card, text="Bounding box max (m):", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=4)
+        bbox_max = self.cfg.get("EM_BOUNDING_BOX_MAX_CORNER_M") or [13.0, 0.5, 0.8]
+        self.var_bbox_max = tk.StringVar(value=f"{bbox_max[0]}, {bbox_max[1]}, {bbox_max[2]}")
+        ttk.Entry(method_card, textvariable=self.var_bbox_max, width=24).grid(
+            row=row, column=1, sticky="w", padx=(8, 0))
+
+        method_card.columnconfigure(1, weight=1)
+
+        # --- EM Tracking card (near mode selector) ---
+        self._em_card = self._make_card(outer, "EM Tracking", pady=(12, 10))
+        em_card = self._em_card
+
+        r = 0
+        ttk.Label(em_card, text="Step length (m):", style="Card.TLabel").grid(
+            row=r, column=0, sticky="w", pady=4)
+        self.var_em_step = tk.DoubleVar(value=self.cfg.get("EM_STEP_LENGTH_M", 0.02))
+        ttk.Entry(em_card, textvariable=self.var_em_step, width=12).grid(
+            row=r, column=1, sticky="w", padx=(8, 0))
+
+        ttk.Label(em_card, text="Max steps:", style="Card.TLabel").grid(
+            row=r, column=2, sticky="w", padx=(24, 0), pady=4)
+        self.var_em_max_steps = tk.IntVar(value=self.cfg.get("EM_MAX_STEPS", 500))
+        ttk.Entry(em_card, textvariable=self.var_em_max_steps, width=10).grid(
+            row=r, column=3, sticky="w", padx=(8, 0))
+
+        r += 1
+        ttk.Label(em_card, text="Min energy (eV):", style="Card.TLabel").grid(
+            row=r, column=0, sticky="w", pady=4)
+        val = self.cfg.get("EM_MIN_ENERGY_EV")
+        self.var_em_min_energy = tk.StringVar(value=str(val) if val is not None else "")
+        ttk.Entry(em_card, textvariable=self.var_em_min_energy, width=12).grid(
+            row=r, column=1, sticky="w", padx=(8, 0))
+
+        ttk.Label(em_card, text="BVH checkpoint (m):", style="Card.TLabel").grid(
+            row=r, column=2, sticky="w", padx=(24, 0), pady=4)
+        self.var_em_checkpoint = tk.DoubleVar(value=self.cfg.get("EM_BVH_CHECKPOINT_DISTANCE_M", 1.0))
+        ttk.Entry(em_card, textvariable=self.var_em_checkpoint, width=12).grid(
+            row=r, column=3, sticky="w", padx=(8, 0))
+
+        em_card.columnconfigure(1, weight=1)
+        em_card.columnconfigure(3, weight=1)
+
+        _on_mode_change()  # apply initial state
 
         # --- Engine card ---
         card = self._make_card(outer, "Engine Settings", pady=(12, 10))
@@ -818,14 +914,6 @@ class SimGUI(tk.Tk):
         ttk.Entry(card, textvariable=self.var_batch, width=12).grid(
             row=row, column=1, sticky="w", padx=(8, 0))
 
-        row += 1
-        ttk.Label(card, text="Sources per worker (legacy, unused):", style="Card.TLabel").grid(
-            row=row, column=0, sticky="w", pady=5)
-        spw = self.cfg.get("SOURCES_PER_WORKER")
-        self.var_spw = tk.StringVar(value=str(spw) if spw is not None else "")
-        ttk.Entry(card, textvariable=self.var_spw, width=12).grid(
-            row=row, column=1, sticky="w", padx=(8, 0))
-
         card.columnconfigure(1, weight=1)
 
         # --- Beam files card ---
@@ -868,6 +956,592 @@ class SimGUI(tk.Tk):
                 var.set(rel)
             except ValueError:
                 var.set(d)
+
+    # ------------------------------------------------------------------
+    #  FIELDS tab (EM settings + external field)
+    # ------------------------------------------------------------------
+    def _build_fields_tab(self, nb):
+        outer = ttk.Frame(nb)
+        nb.add(outer, text="  ⚡  Fields  ")
+
+        ef = self.cfg.get("EXTERNAL_FIELD", {})
+        ef_type = ef.get("type", "zero")
+
+        # --- Magnetic Field card ---
+        b_card = self._make_card(outer, "Magnetic Field", pady=(12, 10))
+
+        # Determine initial B-field mode from config
+        if ef_type in ("uniform", "rid_segment_y", "rid_piecewise"):
+            bvec = ef.get("magnetic_field_t", [0.0, 0.0, 0.0])
+            b_init = "Fixed field (T)" if any(v != 0 for v in bvec) else "No field"
+        else:
+            bvec = [0.0, 0.0, 0.0]
+            b_init = "No field"
+
+        row = 0
+        ttk.Label(b_card, text="Source:", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=4)
+        self.var_bfield_mode = tk.StringVar(value=b_init)
+        b_combo = ttk.Combobox(b_card, textvariable=self.var_bfield_mode,
+                                values=["No field", "Fixed field (T)", "External B field"],
+                                state="readonly", width=20)
+        b_combo.grid(row=row, column=1, sticky="w", padx=(8, 0))
+
+        row += 1
+        self._b_fixed_frame = ttk.Frame(b_card, style="Card.TFrame")
+        self._b_fixed_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
+
+        ttk.Label(self._b_fixed_frame, text="Bx:", style="Card.TLabel").pack(side="left")
+        self.var_bx = tk.DoubleVar(value=bvec[0])
+        ttk.Entry(self._b_fixed_frame, textvariable=self.var_bx, width=10).pack(side="left", padx=(4, 12))
+
+        ttk.Label(self._b_fixed_frame, text="By:", style="Card.TLabel").pack(side="left")
+        self.var_by = tk.DoubleVar(value=bvec[1])
+        ttk.Entry(self._b_fixed_frame, textvariable=self.var_by, width=10).pack(side="left", padx=(4, 12))
+
+        ttk.Label(self._b_fixed_frame, text="Bz:", style="Card.TLabel").pack(side="left")
+        self.var_bz = tk.DoubleVar(value=bvec[2])
+        ttk.Entry(self._b_fixed_frame, textvariable=self.var_bz, width=10).pack(side="left", padx=(4, 0))
+
+        def _on_bfield_mode(*_):
+            show = self.var_bfield_mode.get() == "Fixed field (T)"
+            self._b_fixed_frame.grid() if show else self._b_fixed_frame.grid_remove()
+
+        self.var_bfield_mode.trace_add("write", _on_bfield_mode)
+        _on_bfield_mode()
+
+        b_card.columnconfigure(1, weight=1)
+
+        # --- Electric Field card ---
+        e_card = self._make_card(outer, "Electric Field")
+
+        # Determine initial E-field mode from config
+        if ef_type in ("rid_segment_y", "rid_piecewise"):
+            e_init = "ERID field (simplified)"
+            evec = [0.0, 0.0, 0.0]
+        elif ef_type == "uniform":
+            evec = ef.get("electric_field_vpm", [0.0, 0.0, 0.0])
+            e_init = "Fixed field (V/m)" if any(v != 0 for v in evec) else "No field"
+        else:
+            evec = [0.0, 0.0, 0.0]
+            e_init = "No field"
+
+        row = 0
+        ttk.Label(e_card, text="Source:", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=4)
+        self.var_efield_mode = tk.StringVar(value=e_init)
+        e_combo = ttk.Combobox(e_card, textvariable=self.var_efield_mode,
+                                values=["No field", "Fixed field (V/m)",
+                                        "External E field", "ERID field (simplified)"],
+                                state="readonly", width=20)
+        e_combo.grid(row=row, column=1, sticky="w", padx=(8, 0))
+
+        # -- Fixed E-field entries --
+        row += 1
+        self._e_fixed_frame = ttk.Frame(e_card, style="Card.TFrame")
+        self._e_fixed_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
+
+        ttk.Label(self._e_fixed_frame, text="Ex:", style="Card.TLabel").pack(side="left")
+        self.var_ex = tk.DoubleVar(value=evec[0])
+        ttk.Entry(self._e_fixed_frame, textvariable=self.var_ex, width=10).pack(side="left", padx=(4, 12))
+
+        ttk.Label(self._e_fixed_frame, text="Ey:", style="Card.TLabel").pack(side="left")
+        self.var_ey = tk.DoubleVar(value=evec[1])
+        ttk.Entry(self._e_fixed_frame, textvariable=self.var_ey, width=10).pack(side="left", padx=(4, 12))
+
+        ttk.Label(self._e_fixed_frame, text="Ez:", style="Card.TLabel").pack(side="left")
+        self.var_ez = tk.DoubleVar(value=evec[2])
+        ttk.Entry(self._e_fixed_frame, textvariable=self.var_ez, width=10).pack(side="left", padx=(4, 0))
+
+        # -- RID field entries --
+        row += 1
+        self._rid_frame = ttk.Frame(e_card, style="Card.TFrame")
+        self._rid_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
+
+        ttk.Label(self._rid_frame, text="ERID panel voltage (V):", style="Card.TLabel").pack(side="left")
+        self.var_v_rid = tk.DoubleVar(value=ef.get("v_rid_v", self.cfg.get("V_RID_V", 20000.0)))
+        ttk.Entry(self._rid_frame, textvariable=self.var_v_rid, width=12).pack(side="left", padx=(4, 16))
+
+        ttk.Label(self._rid_frame, text="x_min (m):", style="Card.TLabel").pack(side="left")
+        self.var_rid_xmin = tk.DoubleVar(value=ef.get("x_min_m", 5.4))
+        ttk.Entry(self._rid_frame, textvariable=self.var_rid_xmin, width=10).pack(side="left", padx=(4, 16))
+
+        ttk.Label(self._rid_frame, text="x_max (m):", style="Card.TLabel").pack(side="left")
+        self.var_rid_xmax = tk.DoubleVar(value=ef.get("x_max_m", 7.2))
+        ttk.Entry(self._rid_frame, textvariable=self.var_rid_xmax, width=10).pack(side="left", padx=(4, 0))
+
+        def _on_efield_mode(*_):
+            mode = self.var_efield_mode.get()
+            self._e_fixed_frame.grid() if mode == "Fixed field (V/m)" else self._e_fixed_frame.grid_remove()
+            self._rid_frame.grid() if mode == "ERID field (simplified)" else self._rid_frame.grid_remove()
+
+        self.var_efield_mode.trace_add("write", _on_efield_mode)
+        _on_efield_mode()
+
+        e_card.columnconfigure(1, weight=1)
+
+    # ------------------------------------------------------------------
+    #  REACTIONS tab
+    # ------------------------------------------------------------------
+    def _build_reactions_tab(self, nb):
+        outer_wrapper = ttk.Frame(nb)
+        nb.add(outer_wrapper, text="  🧪  Reactions  ")
+
+        top_pw = ttk.PanedWindow(outer_wrapper, orient="horizontal")
+        top_pw.pack(fill="both", expand=True)
+
+        # ============================================================
+        # LEFT side — scrollable cards
+        # ============================================================
+        left_wrapper = ttk.Frame(top_pw)
+        top_pw.add(left_wrapper, weight=1)
+
+        rxn_canvas = tk.Canvas(left_wrapper, borderwidth=0,
+                                highlightthickness=0,
+                                bg=self._colours["bg"])
+        rxn_vscroll = ttk.Scrollbar(left_wrapper, orient="vertical",
+                                     command=rxn_canvas.yview)
+        outer = ttk.Frame(rxn_canvas)
+        outer.bind("<Configure>",
+                   lambda e: rxn_canvas.configure(
+                       scrollregion=rxn_canvas.bbox("all")))
+        rxn_canvas.create_window((0, 0), window=outer, anchor="nw")
+        rxn_canvas.configure(yscrollcommand=rxn_vscroll.set)
+        rxn_canvas.pack(side="left", fill="both", expand=True)
+        rxn_vscroll.pack(side="right", fill="y")
+
+        rm = self.cfg.get("REACTION_MODEL", {})
+
+        # --- Background Gas Density card ---
+        dens_card = self._make_card(outer, "Background Gas Density", pady=(12, 10))
+
+        # Determine initial mode
+        has_profile = bool(rm.get("density_profile_file", ""))
+        dens_init = "Density profile file (.dens)" if has_profile else "Uniform density"
+
+        row = 0
+        ttk.Label(dens_card, text="Source:", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=4)
+        self.var_density_mode = tk.StringVar(value=dens_init)
+        ttk.Combobox(dens_card, textvariable=self.var_density_mode,
+                      values=["Uniform density", "Density profile file (.dens)"],
+                      state="readonly", width=28).grid(
+            row=row, column=1, sticky="w", padx=(8, 0))
+
+        # -- Uniform density widgets --
+        row += 1
+        self._dens_uniform_frame = ttk.Frame(dens_card, style="Card.TFrame")
+        self._dens_uniform_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=2)
+        ttk.Label(self._dens_uniform_frame, text="Density (m⁻³):", style="Card.TLabel").pack(side="left")
+        self.var_bg_density = tk.DoubleVar(value=rm.get("background_density_m3", 0.0))
+        ttk.Entry(self._dens_uniform_frame, textvariable=self.var_bg_density, width=14).pack(
+            side="left", padx=(8, 0))
+
+        # -- Profile file widgets --
+        row += 1
+        self._dens_profile_frame = ttk.Frame(dens_card, style="Card.TFrame")
+        self._dens_profile_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=2)
+
+        ttk.Label(self._dens_profile_frame, text="File:", style="Card.TLabel").pack(side="left")
+        self.var_density_file = tk.StringVar(value=rm.get("density_profile_file", ""))
+        ttk.Entry(self._dens_profile_frame, textvariable=self.var_density_file, width=30).pack(
+            side="left", fill="x", expand=True, padx=(8, 4))
+        ttk.Button(self._dens_profile_frame, text="Browse…", style="Secondary.TButton",
+                    command=self._browse_density_file).pack(side="left")
+
+        row += 1
+        dens_dir_frame = ttk.Frame(dens_card, style="Card.TFrame")
+        dens_dir_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=2)
+        ttk.Label(dens_dir_frame, text="Profile direction:", style="Card.TLabel").pack(side="left")
+        dd = rm.get("density_profile_direction",
+                     self.cfg.get("DENSITY_DIRECTION", [1.0, 0.0, 0.0]))
+        self.var_density_dir = tk.StringVar(value=f"{dd[0]}, {dd[1]}, {dd[2]}")
+        ttk.Entry(dens_dir_frame, textvariable=self.var_density_dir, width=24).pack(
+            side="left", padx=(8, 0))
+
+        def _on_density_mode(*_):
+            is_uniform = self.var_density_mode.get() == "Uniform density"
+            if is_uniform:
+                self._dens_uniform_frame.grid()
+                self._dens_profile_frame.grid_remove()
+            else:
+                self._dens_uniform_frame.grid_remove()
+                self._dens_profile_frame.grid()
+
+        self.var_density_mode.trace_add("write", _on_density_mode)
+        _on_density_mode()
+
+        dens_card.columnconfigure(1, weight=1)
+
+        # --- Reaction Definitions (Cross Sections) card ---
+        cs_card = self._make_card(outer, "Reaction Definitions (Cross Sections)")
+
+        # Channel definitions: (label, reaction_desc, channel_key)
+        self._cs_channels = [
+            ("H⁻/D⁻ → H⁰/D⁰", "Single stripping",  "single_strip_neg_to_neutral"),
+            ("H⁻/D⁻ → H⁺/D⁺", "Double stripping",   "double_strip_neg_to_positive"),
+            ("H⁰/D⁰ → H⁺/D⁺", "Neutral stripping",  "strip_neutral_to_positive"),
+            ("H⁺/D⁺ → H⁰/D⁰", "Charge exchange",    "charge_exchange_pos_to_neutral"),
+        ]
+
+        manual_cs = rm.get("manual_cross_sections") or {}
+        has_manual = bool(manual_cs)
+        cs_mode_init = "Manual (m²)" if has_manual else "Built-in polynomial fit"
+
+        row = 0
+        ttk.Label(cs_card, text="Source:", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=4)
+        self.var_cs_mode = tk.StringVar(value=cs_mode_init)
+        ttk.Combobox(cs_card, textvariable=self.var_cs_mode,
+                      values=["Built-in polynomial fit", "Manual (m²)"],
+                      state="readonly", width=24).grid(
+            row=row, column=1, columnspan=2, sticky="w", padx=(8, 0))
+
+        # -- Freeze checkbox (only for built-in mode) --
+        row += 1
+        self.var_fixed_cs = tk.BooleanVar(value=rm.get("fixed_cs", False))
+        self._cs_freeze_check = ttk.Checkbutton(
+            cs_card, text="Freeze at initial energy",
+            variable=self.var_fixed_cs, style="Card.TCheckbutton")
+        self._cs_freeze_check.grid(row=row, column=0, columnspan=3, sticky="w", pady=(2, 6))
+
+        # -- Channel rows: always visible, col 2 switches between label and entry --
+        self._cs_manual_vars = {}
+        self._cs_source_labels = {}
+        self._cs_entry_widgets = {}
+        self._cs_unit_labels = {}
+
+        for i, (label, desc, key) in enumerate(self._cs_channels):
+            r = row + 1 + i
+            ttk.Label(cs_card, text=f"{label}", style="Card.TLabel").grid(
+                row=r, column=0, sticky="w", pady=2)
+            ttk.Label(cs_card, text=f"{desc}", style="Card.TLabel").grid(
+                row=r, column=1, sticky="w", padx=(8, 0), pady=2)
+
+            # Built-in label
+            lbl = ttk.Label(cs_card, text="(built-in polynomial fit)", style="Card.TLabel")
+            lbl.grid(row=r, column=2, sticky="w", padx=(8, 0), pady=2)
+            self._cs_source_labels[key] = lbl
+
+            # Manual entry + unit
+            var = tk.StringVar(value=f"{manual_cs.get(key, 0.0):.3e}")
+            self._cs_manual_vars[key] = var
+            ent = ttk.Entry(cs_card, textvariable=var, width=12)
+            ent.grid(row=r, column=2, sticky="w", padx=(8, 0), pady=2)
+            self._cs_entry_widgets[key] = ent
+            unit = ttk.Label(cs_card, text="m²", style="Card.TLabel")
+            unit.grid(row=r, column=3, sticky="w", padx=(4, 0), pady=2)
+            self._cs_unit_labels[key] = unit
+
+        def _on_cs_mode(*_):
+            is_manual = self.var_cs_mode.get() == "Manual (m²)"
+            for key in self._cs_manual_vars:
+                if is_manual:
+                    self._cs_source_labels[key].grid_remove()
+                    self._cs_entry_widgets[key].grid()
+                    self._cs_unit_labels[key].grid()
+                else:
+                    self._cs_entry_widgets[key].grid_remove()
+                    self._cs_unit_labels[key].grid_remove()
+                    self._cs_source_labels[key].grid()
+            if is_manual:
+                self._cs_freeze_check.grid_remove()
+            else:
+                self._cs_freeze_check.grid()
+
+        self.var_cs_mode.trace_add("write", _on_cs_mode)
+        _on_cs_mode()
+
+        cs_card.columnconfigure(1, weight=0)
+
+        # ============================================================
+        # RIGHT side — embedded diagnostic plots
+        # ============================================================
+        right_frm = ttk.Frame(top_pw, style="Card.TFrame", padding=8)
+        top_pw.add(right_frm, weight=1)
+
+        ttk.Label(right_frm, text="Diagnostic Plots",
+                  style="CardHeader.TLabel").pack(anchor="w", pady=(0, 4))
+
+        # --- plot parameter row ---
+        param_row = ttk.Frame(right_frm, style="Card.TFrame")
+        param_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(param_row, text="Species:",
+                  style="Card.TLabel").pack(side="left", padx=(0, 4))
+        self.var_plot_species = tk.StringVar(value="H")
+        cb_species = ttk.Combobox(param_row, textvariable=self.var_plot_species,
+                                  values=["H", "D"], state="readonly", width=4)
+        cb_species.pack(side="left", padx=(0, 12))
+        ttk.Label(param_row, text="Energy [eV]:",
+                  style="Card.TLabel").pack(side="left", padx=(0, 4))
+        self.var_plot_energy = tk.DoubleVar(value=870e3)
+        ttk.Entry(param_row, textvariable=self.var_plot_energy, width=12).pack(side="left")
+
+        # --- plot buttons ---
+        btn_row = ttk.Frame(right_frm, style="Card.TFrame")
+        btn_row.pack(fill="x", pady=(0, 6))
+        ttk.Button(btn_row, text="Cross Sections", style="Secondary.TButton",
+                    command=self._plot_cross_sections).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_row, text="Gas Density", style="Secondary.TButton",
+                    command=self._plot_gas_density).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_row, text="Species Evolution", style="Secondary.TButton",
+                    command=self._plot_species_evolution).pack(side="left")
+
+        self._rxn_fig = Figure(figsize=(5.5, 4.5), dpi=100)
+        self._rxn_canvas = FigureCanvasTkAgg(self._rxn_fig, master=right_frm)
+        self._rxn_toolbar = NavigationToolbar2Tk(self._rxn_canvas, right_frm)
+        self._rxn_toolbar.update()
+        self._rxn_canvas.get_tk_widget().pack(fill="both", expand=True)
+        self._rxn_cursor_artists = []
+        self._rxn_canvas.mpl_connect("motion_notify_event", self._on_rxn_mouse_move)
+
+    # ------------------------------------------------------------------
+    def _on_rxn_mouse_move(self, event):
+        """Show value labels on every plotted line at the cursor x-coordinate."""
+        for a in self._rxn_cursor_artists:
+            a.remove()
+        self._rxn_cursor_artists.clear()
+
+        if not self._rxn_fig.axes:
+            return
+        ax = self._rxn_fig.axes[0]
+        if event.inaxes != ax or event.xdata is None:
+            self._rxn_canvas.draw_idle()
+            return
+
+        x = event.xdata
+        is_logx = ax.get_xscale() == "log"
+        is_logy = ax.get_yscale() == "log"
+
+        vl = ax.axvline(x, color="#888888", ls=":", lw=0.8, alpha=0.5)
+        self._rxn_cursor_artists.append(vl)
+
+        # Collect (y_value, label, color) for each data line
+        items = []
+        for line in ax.get_lines():
+            lbl = line.get_label()
+            if not lbl or lbl.startswith("_"):
+                continue
+            xd = np.asarray(line.get_xdata(), dtype=float)
+            yd = np.asarray(line.get_ydata(), dtype=float)
+            if len(xd) <= 2:          # skip axvline / cursor markers
+                continue
+            if x < xd.min() or x > xd.max():
+                continue
+            if is_logx and is_logy:
+                yi = 10 ** np.interp(np.log10(x),
+                                     np.log10(xd),
+                                     np.log10(np.maximum(yd, 1e-300)))
+            elif is_logx:
+                yi = np.interp(np.log10(x), np.log10(xd), yd)
+            else:
+                yi = np.interp(x, xd, yd)
+            items.append((yi, lbl, line.get_color()))
+
+        # Draw dots and labels close to points
+        for idx, (yi, lbl, col) in enumerate(items):
+            dot, = ax.plot(x, yi, "o", color=col, ms=5, zorder=10)
+            self._rxn_cursor_artists.append(dot)
+            y_off = 6 * (1 if idx % 2 == 0 else -1)
+            txt = ax.annotate(
+                f"{lbl}: {yi:.3e}", xy=(x, yi),
+                xytext=(8, y_off), textcoords="offset points",
+                fontsize=7.5, color=col, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.15", fc="white", ec=col,
+                          alpha=0.85, lw=0.6),
+                zorder=11,
+            )
+            self._rxn_cursor_artists.append(txt)
+
+        self._rxn_canvas.draw_idle()
+
+    def _plot_cross_sections(self):
+        """Show cross sections vs particle energy (log-log) in the embedded canvas."""
+        import cross_sections as cs
+        iso = self.var_plot_species.get()
+        energy = np.logspace(1, 7, 500)  # 10 eV to 10 MeV
+        sigma_ss = np.maximum(cs.cs_hm_single_strip(energy, isotope=iso), 1e-25)
+        sigma_ds = np.maximum(cs.cs_hm_double_strip(energy, isotope=iso), 1e-25)
+        sigma_ns = np.maximum(cs.cs_proj_ionization_h0(energy, isotope=iso), 1e-25)
+        sigma_cx = np.maximum(cs.cs_cx_hp(energy, isotope=iso), 1e-25)
+
+        neg = "H⁻" if iso == "H" else "D⁻"
+        neu = "H⁰" if iso == "H" else "D⁰"
+        pos = "H⁺" if iso == "H" else "D⁺"
+
+        self._rxn_fig.clear()
+        ax = self._rxn_fig.add_subplot(111)
+        ax.loglog(energy, sigma_ss, label=f"{neg}→{neu} (single strip)", linewidth=1.8)
+        ax.loglog(energy, sigma_ds, label=f"{neg}→{pos} (double strip)", linewidth=1.8)
+        ax.loglog(energy, sigma_ns, label=f"{neu}→{pos} (neutral strip)", linewidth=1.8)
+        ax.loglog(energy, sigma_cx, label=f"{pos}→{neu} (charge exchange)", linewidth=1.8)
+        ax.set_xlabel("Particle energy [eV]")
+        ax.set_ylabel("Cross section [m²]")
+        ax.set_ylim(bottom=1e-25)
+        ax.set_title(f"Beam–Gas Cross Sections ({iso})")
+        ax.axvline(self.var_plot_energy.get(), color="gray", linestyle="--",
+                    linewidth=1.0, alpha=0.7, label=f"E = {self.var_plot_energy.get():.0f} eV")
+        ax.grid(True, which="both", alpha=0.3)
+        ax.legend(fontsize=9)
+        self._rxn_fig.tight_layout()
+        self._rxn_canvas.draw()
+
+    def _plot_gas_density(self):
+        """Show the gas density profile along the beam direction through the bounding box."""
+        from reactions import BeamCrossSectionReaction
+
+        density_dir = self._parse_vec3(self.var_density_dir.get())
+        bbox_min = self._parse_vec3(self.var_bbox_min.get())
+        bbox_max = self._parse_vec3(self.var_bbox_max.get())
+
+        dir_arr = np.array(density_dir, dtype=np.float64)
+        dir_norm = np.linalg.norm(dir_arr)
+        if dir_norm <= 0:
+            messagebox.showerror("Gas Density", "Invalid density direction.")
+            return
+        dir_arr /= dir_norm
+
+        from prerun_analysis import _ray_exit_distance_from_box
+        start = np.array(bbox_min, dtype=np.float64)
+        line_len = _ray_exit_distance_from_box(start, dir_arr, bbox_min, bbox_max)
+        if line_len is None or line_len <= 0:
+            messagebox.showerror("Gas Density",
+                                 "Density direction does not traverse the bounding box.")
+            return
+
+        is_uniform = self.var_density_mode.get() == "Uniform density"
+        density_file = None if is_uniform else self.var_density_file.get()
+        bg_density = self.var_bg_density.get()
+
+        model = BeamCrossSectionReaction(
+            background_density_m3=bg_density,
+            density_profile_file=density_file,
+            density_profile_direction=density_dir,
+            verbose=False,
+        )
+
+        steps = max(2, int(np.ceil(line_len / 0.01)) + 1)
+        distance = np.linspace(0.0, line_len, steps)
+        positions = start[np.newaxis, :] + distance[:, np.newaxis] * dir_arr[np.newaxis, :]
+        dens = np.maximum(np.asarray(model._density_at_positions(positions),
+                                      dtype=np.float64), 0.0)
+
+        self._rxn_fig.clear()
+        ax = self._rxn_fig.add_subplot(111)
+        ax.plot(distance, dens, color="tab:green", linewidth=2.0)
+        ax.set_xlabel("Distance along beam direction [m]")
+        ax.set_ylabel("Gas density [m⁻³]")
+        ax.set_title("Background Gas Density Profile")
+        ax.grid(True, alpha=0.3)
+        self._rxn_fig.tight_layout()
+        self._rxn_canvas.draw()
+
+    def _plot_species_evolution(self):
+        """Show analytical species evolution using prerun_analysis logic."""
+        import cross_sections as cs
+        from reactions import BeamCrossSectionReaction
+
+        # Read current config values
+        bbox_min = self._parse_vec3(self.var_bbox_min.get())
+        bbox_max = self._parse_vec3(self.var_bbox_max.get())
+        step_len = self.var_em_step.get()
+        density_dir = self._parse_vec3(self.var_density_dir.get())
+
+        # Build a temporary reaction model from current GUI state
+        density_file = self.var_density_file.get() \
+            if self.var_density_mode.get() != "Uniform density" else None
+        bg_density = self.var_bg_density.get()
+        model = BeamCrossSectionReaction(
+            background_density_m3=bg_density,
+            density_profile_file=density_file,
+            density_profile_direction=density_dir,
+            verbose=False,
+        )
+
+        # Use beam line along density direction from bbox min to max
+        dir_arr = np.array(density_dir, dtype=np.float64)
+        dir_norm = np.linalg.norm(dir_arr)
+        if dir_norm <= 0:
+            messagebox.showerror("Species Evolution", "Invalid density direction.")
+            return
+        dir_arr /= dir_norm
+
+        from prerun_analysis import _ray_exit_distance_from_box
+        start = np.array(bbox_min, dtype=np.float64)
+        line_len = _ray_exit_distance_from_box(start, dir_arr, bbox_min, bbox_max)
+        if line_len is None or line_len <= 0:
+            messagebox.showerror("Species Evolution",
+                                 "Beam direction does not traverse the bounding box.")
+            return
+
+        steps = max(2, int(np.ceil(line_len / step_len)) + 1)
+        distance = np.linspace(0.0, line_len, steps)
+        positions = start[np.newaxis, :] + distance[:, np.newaxis] * dir_arr[np.newaxis, :]
+
+        density_sampler = model._density_at_positions
+        density_m3 = np.maximum(np.asarray(density_sampler(positions), dtype=np.float64), 0.0)
+
+        iso = self.var_plot_species.get()
+        avg_energy_ev = self.var_plot_energy.get()
+        from constants import HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG, ELEMENTARY_CHARGE_C
+        avg_mass_kg = HYDROGEN_MASS_KG if iso == "H" else DEUTERIUM_MASS_KG
+        avg_speed = np.sqrt(2.0 * avg_energy_ev * ELEMENTARY_CHARGE_C / avg_mass_kg)
+
+        if self.var_cs_mode.get() == "Manual (m²)":
+            s_ss = float(self._cs_manual_vars["single_strip_neg_to_neutral"].get())
+            s_ds = float(self._cs_manual_vars["double_strip_neg_to_positive"].get())
+            s_ns = float(self._cs_manual_vars["strip_neutral_to_positive"].get())
+            s_cx = float(self._cs_manual_vars["charge_exchange_pos_to_neutral"].get())
+        else:
+            sigma = cs.channel_cross_sections(avg_energy_ev, isotope=iso)
+            s_ss = float(np.asarray(sigma[cs.CH_SINGLE_STRIP]))
+            s_ds = float(np.asarray(sigma[cs.CH_DOUBLE_STRIP]))
+            s_ns = float(np.asarray(sigma[cs.CH_NEUTRAL_STRIP]))
+            s_cx = float(np.asarray(sigma[cs.CH_CHARGE_EXCHANGE]))
+
+        fractions = np.zeros((steps, 3), dtype=np.float64)
+        fractions[0] = [1.0, 0.0, 0.0]  # start as H-
+
+        for i in range(steps - 1):
+            ds = distance[i + 1] - distance[i]
+            dt = ds / avg_speed
+            f_neg, f_neu, f_pos = fractions[i]
+            n = density_m3[i]
+            dn = -(s_ss + s_ds) * n * avg_speed * f_neg
+            d0 = s_ss * n * avg_speed * f_neg - s_ns * n * avg_speed * f_neu + s_cx * n * avg_speed * f_pos
+            dp = s_ds * n * avg_speed * f_neg + s_ns * n * avg_speed * f_neu - s_cx * n * avg_speed * f_pos
+            nxt = fractions[i] + dt * np.array([dn, d0, dp])
+            nxt = np.maximum(nxt, 0.0)
+            s = nxt.sum()
+            if s > 0:
+                nxt /= s
+            fractions[i + 1] = nxt
+
+        self._rxn_fig.clear()
+        ax = self._rxn_fig.add_subplot(111)
+        ax.plot(distance, fractions[:, 0], label="H⁻/D⁻", linewidth=2.0)
+        ax.plot(distance, fractions[:, 1], label="H⁰/D⁰", linewidth=2.0)
+        ax.plot(distance, fractions[:, 2], label="H⁺/D⁺", linewidth=2.0)
+        ax.set_xlabel("Distance along beam direction [m]")
+        ax.set_ylabel("Species fraction")
+        ax.set_title(f"Analytical Species Evolution (E={avg_energy_ev/1e3:.0f} keV)")
+        ax.set_ylim(0.0, 1.05)
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        self._rxn_fig.tight_layout()
+        self._rxn_canvas.draw()
+
+    def _browse_density_file(self):
+        p = filedialog.askopenfilename(
+            initialdir=_SCRIPT_DIR,
+            title="Select density profile file",
+            filetypes=[("Density files", "*.dens"), ("All files", "*")])
+        if p:
+            try:
+                rel = os.path.relpath(p, _SCRIPT_DIR)
+                self.var_density_file.set(rel)
+            except ValueError:
+                self.var_density_file.set(p)
 
     # ------------------------------------------------------------------
     #  OUTPUT tab
@@ -1080,24 +1754,39 @@ class SimGUI(tk.Tk):
         # --- helper: detect column keys ---
         def _detect_keys(rows):
             name_key = power_key = density_key = None
+            species_power = {}   # suffix → column name
+            species_density = {}  # suffix → column name
             if not rows:
-                return None, None, None
+                return None, None, None, {}, {}
             keys = list(rows[0].keys())
             for k in keys:
                 kl = k.lower()
                 if "name" in kl or "file" in kl:
                     name_key = k
                 elif "total" in kl and "power" in kl:
-                    power_key = k
+                    # Check for species suffix (e.g. _H-, _H0, _H+)
+                    for suffix in ("_H-", "_H0", "_H+", "_D-", "_D0", "_D+"):
+                        if k.endswith(suffix):
+                            species_power[suffix[1:]] = k
+                            break
+                    else:
+                        if power_key is None:
+                            power_key = k
                 elif "peak" in kl or "density" in kl:
-                    density_key = k
+                    for suffix in ("_H-", "_H0", "_H+", "_D-", "_D0", "_D+"):
+                        if k.endswith(suffix):
+                            species_density[suffix[1:]] = k
+                            break
+                    else:
+                        if density_key is None:
+                            density_key = k
             if name_key is None and len(keys) >= 1:
                 name_key = keys[0]
             if power_key is None and len(keys) >= 2:
                 power_key = keys[1]
             if density_key is None and len(keys) >= 3:
                 density_key = keys[2]
-            return name_key, power_key, density_key
+            return name_key, power_key, density_key, species_power, species_density
 
         # --- helper: normalise object name for matching ---
         def _norm(name):
@@ -1134,7 +1823,7 @@ class SimGUI(tk.Tk):
                 n_errors += 1
                 continue
 
-            raw_nk, raw_pk, raw_dk = _detect_keys(raw_rows)
+            raw_nk, raw_pk, raw_dk, raw_sp, raw_sd = _detect_keys(raw_rows)
 
             merged = {}
             display_order = []
@@ -1143,8 +1832,12 @@ class SimGUI(tk.Tk):
                 obj = _norm(obj_raw)
                 tp = row.get(raw_pk, "N/A") if raw_pk else "N/A"
                 pd_ = row.get(raw_dk, "N/A") if raw_dk else "N/A"
-                merged[obj] = {"name": obj, "tp": tp, "pd": pd_,
-                               "source": "raw"}
+                entry = {"name": obj, "tp": tp, "pd": pd_, "source": "raw"}
+                for sp_key, col in raw_sp.items():
+                    entry[f"tp_{sp_key}"] = row.get(col, "N/A")
+                for sp_key, col in raw_sd.items():
+                    entry[f"pd_{sp_key}"] = row.get(col, "N/A")
+                merged[obj] = entry
                 if obj not in display_order:
                     display_order.append(obj)
 
@@ -1159,21 +1852,22 @@ class SimGUI(tk.Tk):
                 if smoothed_path:
                     try:
                         sm_rows = _read_csv(smoothed_path)
-                        sm_nk, sm_pk, sm_dk = _detect_keys(sm_rows)
+                        sm_nk, sm_pk, sm_dk, sm_sp, sm_sd = _detect_keys(sm_rows)
                         for row in sm_rows:
                             obj_raw = row.get(sm_nk, "?") if sm_nk else "?"
                             obj = _norm(obj_raw)
                             tp = row.get(sm_pk, "N/A") if sm_pk else "N/A"
                             pd_ = row.get(sm_dk, "N/A") if sm_dk else "N/A"
-                            if obj in merged:
-                                merged[obj] = {
-                                    "name": merged[obj]["name"],
-                                    "tp": tp, "pd": pd_,
-                                    "source": "smoothed"}
-                            else:
-                                merged[obj] = {
-                                    "name": obj, "tp": tp, "pd": pd_,
-                                    "source": "smoothed"}
+                            # Start from existing entry to preserve species data
+                            prev = merged.get(obj, {"name": obj})
+                            entry = dict(prev)
+                            entry.update({"tp": tp, "pd": pd_, "source": "smoothed"})
+                            for sp_key, col in sm_sp.items():
+                                entry[f"tp_{sp_key}"] = row.get(col, "N/A")
+                            for sp_key, col in sm_sd.items():
+                                entry[f"pd_{sp_key}"] = row.get(col, "N/A")
+                            merged[obj] = entry
+                            if obj not in display_order:
                                 display_order.append(obj)
                     except Exception:
                         pass
@@ -1241,13 +1935,25 @@ class SimGUI(tk.Tk):
         ax_peak.clear()
         ax_power.clear()
 
-        data = self._csv_plot_data  # { sim_name: [{ name, tp, pd, source }] }
+        data = self._csv_plot_data  # { sim_name: [{ name, tp, pd, source, tp_H-, ... }] }
         if not data:
             ax_peak.set_title("Peak Heat Load [W/m²]", fontsize=10)
             ax_power.set_title("Total Power [W]", fontsize=10)
             self._csv_fig.tight_layout()
             self._csv_canvas_mpl.draw()
             return
+
+        # Determine which keys to use based on species selector
+        sp_sel = self.var_chart_species.get()
+        _species_map = {
+            "H⁻/D⁻ (negative)": "H-",
+            "H⁰/D⁰ (neutrals)": "H0",
+            "H⁺/D⁺ (positive)": "H+",
+        }
+        sp_suffix = _species_map.get(sp_sel)
+        tp_key = f"tp_{sp_suffix}" if sp_suffix else "tp"
+        pd_key = f"pd_{sp_suffix}" if sp_suffix else "pd"
+        species_label = f" ({sp_suffix})" if sp_suffix else ""
 
         sim_names = list(data.keys())
 
@@ -1302,11 +2008,11 @@ class SimGUI(tk.Tk):
                 e = lookup.get(obj)
                 if e:
                     try:
-                        peaks.append(float(e["pd"]) * m)
+                        peaks.append(float(e.get(pd_key, "N/A")) * m)
                     except (ValueError, TypeError):
                         peaks.append(0.0)
                     try:
-                        powers.append(float(e["tp"]) * m)
+                        powers.append(float(e.get(tp_key, "N/A")) * m)
                     except (ValueError, TypeError):
                         powers.append(0.0)
                 else:
@@ -1336,7 +2042,7 @@ class SimGUI(tk.Tk):
             (ax_peak, "Peak Heat Load", "W/m²", self.var_chart_log_peak),
             (ax_power, "Total Deposited Power", "W", self.var_chart_log_power),
         ]:
-            ax.set_title(f"{title} [{unit}]", fontsize=10, fontweight="bold")
+            ax.set_title(f"{title}{species_label} [{unit}]", fontsize=10, fontweight="bold")
             ax.set_xticks(x)
             ax.set_xticklabels(display_labels, rotation=45, ha="right",
                                fontsize=8)
@@ -1558,6 +2264,16 @@ class SimGUI(tk.Tk):
                     command=self._update_csv_bar_plots).pack(
                         side="left", padx=2)
 
+        # Species filter
+        sp_frm = ttk.Frame(comp_frm, style="Card.TFrame")
+        sp_frm.pack(fill="x", pady=(2, 2))
+        ttk.Label(sp_frm, text="Species:", style="Card.TLabel").pack(side="left")
+        self.var_chart_species = tk.StringVar(value="Total")
+        ttk.Combobox(sp_frm, textvariable=self.var_chart_species,
+                      values=["Total", "H⁻/D⁻ (negative)", "H⁰/D⁰ (neutrals)",
+                              "H⁺/D⁺ (positive)"],
+                      state="readonly", width=18).pack(side="left", padx=(4, 0))
+
         # Log-scale checkboxes
         log_frm = ttk.Frame(comp_frm, style="Card.TFrame")
         log_frm.pack(fill="x", pady=(2, 2))
@@ -1728,8 +2444,66 @@ class SimGUI(tk.Tk):
         except Exception as e:
             messagebox.showerror("Load Error", str(e))
 
+    @staticmethod
+    def _parse_vec3(text):
+        """Parse a comma-separated string into a list of 3 floats."""
+        parts = [s.strip() for s in text.split(",")]
+        return [float(parts[i]) if i < len(parts) else 0.0 for i in range(3)]
+
     def _collect(self):
         d = dict(self.cfg)  # start from current (preserves unknown keys)
+        # Tracking method
+        is_em = self.var_tracking_mode.get() == "EM Tracing"
+        d["TRACKING_MODE"] = "em_track_then_bvh" if is_em else "ray"
+        # EM settings
+        d["EM_STEP_LENGTH_M"] = self.var_em_step.get()
+        d["EM_MAX_STEPS"] = self.var_em_max_steps.get()
+        v = self.var_em_min_energy.get().strip()
+        d["EM_MIN_ENERGY_EV"] = float(v) if v else None
+        d["EM_BVH_CHECKPOINT_DISTANCE_M"] = self.var_em_checkpoint.get()
+        d["EM_BOUNDING_BOX_MIN_CORNER_M"] = self._parse_vec3(self.var_bbox_min.get())
+        d["EM_BOUNDING_BOX_MAX_CORNER_M"] = self._parse_vec3(self.var_bbox_max.get())
+        # External field — compose from separate B / E selections
+        b_mode = self.var_bfield_mode.get()
+        e_mode = self.var_efield_mode.get()
+        bvec = [self.var_bx.get(), self.var_by.get(), self.var_bz.get()] \
+            if b_mode == "Fixed field (T)" else [0.0, 0.0, 0.0]
+
+        if e_mode == "ERID field (simplified)":
+            ef = {"type": "rid_segment_y",
+                  "v_rid_v": self.var_v_rid.get(),
+                  "x_min_m": self.var_rid_xmin.get(),
+                  "x_max_m": self.var_rid_xmax.get(),
+                  "magnetic_field_t": bvec}
+        elif e_mode == "Fixed field (V/m)" or b_mode == "Fixed field (T)":
+            evec = [self.var_ex.get(), self.var_ey.get(), self.var_ez.get()] \
+                if e_mode == "Fixed field (V/m)" else [0.0, 0.0, 0.0]
+            ef = {"type": "uniform",
+                  "electric_field_vpm": evec,
+                  "magnetic_field_t": bvec}
+        else:
+            ef = {"type": "zero"}
+        d["EXTERNAL_FIELD"] = ef
+        d["V_RID_V"] = self.var_v_rid.get()
+        # Reaction model
+        if is_em and self.var_reactions_enabled.get():
+            dd_vec = self._parse_vec3(self.var_density_dir.get())
+            rm_dict = {
+                "type": "beam_gas_cross_sections",
+                "background_density_m3": self.var_bg_density.get(),
+                "density_profile_file": self.var_density_file.get(),
+                "density_profile_direction": dd_vec,
+            }
+            if self.var_cs_mode.get() == "Manual (m²)":
+                rm_dict["manual_cross_sections"] = {
+                    k: float(v.get()) for k, v in self._cs_manual_vars.items()
+                }
+            else:
+                rm_dict["fixed_cs"] = self.var_fixed_cs.get()
+            d["REACTION_MODEL"] = rm_dict
+            d["DENSITY_DIRECTION"] = dd_vec
+        else:
+            d["REACTION_MODEL"] = {"type": "none"}
         d["NUM_CPU_CORES"] = self.var_cpu.get()
         d["GEOMETRY_CACHE_DIR"] = self.var_cache.get()
         d["PARAVIEW_PATH"] = self.var_pv_path.get()
@@ -1740,8 +2514,6 @@ class SimGUI(tk.Tk):
         d["NUM_PARTICLES_PER_BEAMLET"] = self.var_npb.get()
         d["BEAMLET_RADIUS_M"] = self.var_radius.get()
         d["PARTICLE_BATCH_SIZE"] = self.var_batch.get()
-        spw = self.var_spw.get().strip()
-        d["SOURCES_PER_WORKER"] = int(spw) if spw else None
         d["DETAILED_OUTPUT_DIR"] = self.var_outdir.get()
         d["SAVE_PARAVIEW_FILES"] = self.var_SAVE_PARAVIEW_FILES.get()
         d["SAVE_CSV_REPORTS"] = self.var_SAVE_CSV_REPORTS.get()
@@ -1796,7 +2568,13 @@ class SimGUI(tk.Tk):
     def _refresh_all_from_cfg(self):
         """Push self.cfg values back into every GUI widget."""
         c = self.cfg
-        # General
+        # General — tracking method
+        raw_mode = c.get("TRACKING_MODE", "ray")
+        self.var_tracking_mode.set("EM Tracing" if raw_mode == "em_track_then_bvh" else "Ray Tracing")
+        rm = c.get("REACTION_MODEL", {})
+        reactions_on = rm.get("type", "none") not in ("none", "off", "null")
+        self.var_reactions_enabled.set(reactions_on and raw_mode == "em_track_then_bvh")
+        # General — engine
         self.var_cpu.set(c.get("NUM_CPU_CORES", 1))
         self.var_cache.set(c.get("GEOMETRY_CACHE_DIR", "geometry_cache"))
         self.var_pv_path.set(c.get("PARAVIEW_PATH", "paraview"))
@@ -1808,8 +2586,6 @@ class SimGUI(tk.Tk):
         self.var_npb.set(c.get("NUM_PARTICLES_PER_BEAMLET", 10001))
         self.var_radius.set(c.get("BEAMLET_RADIUS_M", 0.007))
         self.var_batch.set(c.get("PARTICLE_BATCH_SIZE", 2_500_000))
-        spw = c.get("SOURCES_PER_WORKER")
-        self.var_spw.set(str(spw) if spw is not None else "")
         self._refresh_bl_list()
         # Output
         self.var_outdir.set(c.get("DETAILED_OUTPUT_DIR", "OUTPUT"))
@@ -1822,6 +2598,54 @@ class SimGUI(tk.Tk):
         self.var_sm_radius.set(c.get("SMOOTHING_RADIUS", 0.02))
         mca = c.get("SMOOTHING_MAX_CELL_AREA")
         self.var_sm_mca.set(str(mca) if mca is not None else "")
+        # Fields — EM settings
+        self.var_em_step.set(c.get("EM_STEP_LENGTH_M", 0.02))
+        self.var_em_max_steps.set(c.get("EM_MAX_STEPS", 500))
+        v = c.get("EM_MIN_ENERGY_EV")
+        self.var_em_min_energy.set(str(v) if v is not None else "")
+        self.var_em_checkpoint.set(c.get("EM_BVH_CHECKPOINT_DISTANCE_M", 1.0))
+        bbox_min = c.get("EM_BOUNDING_BOX_MIN_CORNER_M") or [0.0, -0.5, -1.3]
+        self.var_bbox_min.set(f"{bbox_min[0]}, {bbox_min[1]}, {bbox_min[2]}")
+        bbox_max = c.get("EM_BOUNDING_BOX_MAX_CORNER_M") or [13.0, 0.5, 0.8]
+        self.var_bbox_max.set(f"{bbox_max[0]}, {bbox_max[1]}, {bbox_max[2]}")
+        # Fields — B and E field cards
+        ef = c.get("EXTERNAL_FIELD", {})
+        ef_type = ef.get("type", "zero")
+        # Magnetic field
+        bvec = ef.get("magnetic_field_t", [0.0, 0.0, 0.0])
+        if ef_type in ("uniform", "rid_segment_y", "rid_piecewise") and any(v != 0 for v in bvec):
+            self.var_bfield_mode.set("Fixed field (T)")
+        else:
+            self.var_bfield_mode.set("No field")
+        self.var_bx.set(bvec[0]); self.var_by.set(bvec[1]); self.var_bz.set(bvec[2])
+        # Electric field
+        if ef_type in ("rid_segment_y", "rid_piecewise"):
+            self.var_efield_mode.set("ERID field (simplified)")
+        elif ef_type == "uniform":
+            evec = ef.get("electric_field_vpm", [0.0, 0.0, 0.0])
+            self.var_efield_mode.set("Fixed field (V/m)" if any(v != 0 for v in evec) else "No field")
+            self.var_ex.set(evec[0]); self.var_ey.set(evec[1]); self.var_ez.set(evec[2])
+        else:
+            self.var_efield_mode.set("No field")
+        self.var_v_rid.set(ef.get("v_rid_v", c.get("V_RID_V", 20000.0)))
+        self.var_rid_xmin.set(ef.get("x_min_m", 5.4))
+        self.var_rid_xmax.set(ef.get("x_max_m", 7.2))
+        # Reactions
+        rm = c.get("REACTION_MODEL", {})
+        self.var_bg_density.set(rm.get("background_density_m3", 0.0))
+        self.var_density_file.set(rm.get("density_profile_file", ""))
+        dd = rm.get("density_profile_direction",
+                     c.get("DENSITY_DIRECTION", [1.0, 0.0, 0.0]))
+        self.var_density_dir.set(f"{dd[0]}, {dd[1]}, {dd[2]}")
+        # Cross-section mode
+        manual_cs = rm.get("manual_cross_sections") or {}
+        if manual_cs:
+            self.var_cs_mode.set("Manual (m²)")
+            for key, var in self._cs_manual_vars.items():
+                var.set(f"{manual_cs.get(key, 0.0):.3e}")
+        else:
+            self.var_cs_mode.set("Built-in polynomial fit")
+            self.var_fixed_cs.set(rm.get("fixed_cs", False))
 
     # ------------------------------------------------------------------
     #  Run simulation in background thread

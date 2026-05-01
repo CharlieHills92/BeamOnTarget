@@ -2,7 +2,7 @@
 
 import os
 import numpy as np
-from constants import ELEMENTARY_CHARGE_C
+from constants import ELEMENTARY_CHARGE_C, HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG
 import cross_sections
 from scipy.interpolate import interp1d
 
@@ -34,13 +34,13 @@ class BeamCrossSectionReaction(ReactionModel):
 
     def __init__(
         self,
-        isotope="H",
         background_density_m3=0.0,
         density_profile_file=None,
         density_profile_direction=(1.0, 0.0, 0.0),
         fixed_cs=False,
+        manual_cross_sections=None,
+        verbose=True,
     ):
-        self.isotope = str(isotope).strip().upper()
         self.background_density_m3 = float(background_density_m3)
         self.density_profile_file = density_profile_file
         self.density_profile_file_resolved = None
@@ -48,12 +48,14 @@ class BeamCrossSectionReaction(ReactionModel):
         self.density_profile_values_m3 = None
         self.density_profile_direction = self._normalize_direction(density_profile_direction)
         self.fixed_cs = bool(fixed_cs)
+        self.manual_cross_sections = dict(manual_cross_sections) if manual_cross_sections else None
         self._cached_sigmas = None   # populated on first apply() call when fixed_cs=True
 
         if density_profile_file:
             self._load_density_profile(density_profile_file)
 
-        self._print_configuration_summary()
+        if verbose:
+            self._print_configuration_summary()
 
     @staticmethod
     def _normalize_direction(direction):
@@ -138,7 +140,7 @@ class BeamCrossSectionReaction(ReactionModel):
         if self.density_profile_positions_m is None:
             print(
                 "BeamCrossSectionReaction: using uniform background density "
-                f"n={self.background_density_m3:.6e} m^-3, isotope={self.isotope}, "
+                f"n={self.background_density_m3:.6e} m^-3, "
                 f"direction={direction_str}."
             )
             return
@@ -153,7 +155,7 @@ class BeamCrossSectionReaction(ReactionModel):
             f"'{self.density_profile_file_resolved}' with {points} points, "
             f"s-range=[{s_min:.6e}, {s_max:.6e}] m, "
             f"n-range=[{n_min:.6e}, {n_max:.6e}] m^-3, "
-            f"isotope={self.isotope}, direction={direction_str}."
+            f"direction={direction_str}."
         )
 
     def _density_at_positions(self, positions_m):
@@ -178,15 +180,26 @@ class BeamCrossSectionReaction(ReactionModel):
         mass = np.asarray(species_frame.mass_kg, dtype=np.float64)
         energy_ev = 0.5 * mass * speed * speed / ELEMENTARY_CHARGE_C
 
+        # Auto-detect isotope from particle mass
+        mean_mass = float(np.mean(mass))
+        isotope = "D" if abs(mean_mass - DEUTERIUM_MASS_KG) < abs(mean_mass - HYDROGEN_MASS_KG) else "H"
+
         density_m3 = self._density_at_positions(positions_m)
 
-        if self.fixed_cs:
+        if self.manual_cross_sections:
+            # Use user-supplied constant cross-sections (scalar values in m²)
+            sigmas = self.manual_cross_sections
+            probs = {}
+            for k, sigma in sigmas.items():
+                rate = np.asarray(sigma, dtype=np.float64) * speed * density_m3
+                probs[k] = 1.0 - np.exp(-rate * np.asarray(dt_s, dtype=np.float64))
+        elif self.fixed_cs:
             # Compute cross-sections once at mean initial energy (scalar), reuse on subsequent calls.
             # Using mean energy produces scalar sigmas that broadcast with any batch size.
             if self._cached_sigmas is None:
                 mean_energy = float(np.mean(energy_ev))
                 self._cached_sigmas = cross_sections.channel_cross_sections(
-                    energy_ev=mean_energy, isotope=self.isotope,
+                    energy_ev=mean_energy, isotope=isotope,
                 )
             sigmas = self._cached_sigmas
             # Compute probabilities from cached sigmas: rate = sigma * speed * density
@@ -200,7 +213,7 @@ class BeamCrossSectionReaction(ReactionModel):
                 speed_mps=speed,
                 dt_s=dt_s,
                 background_density_m3=density_m3,
-                isotope=self.isotope,
+                isotope=isotope,
             )
 
         charge = species_frame.charge_state_e
@@ -274,11 +287,11 @@ def create_reaction_model(config_dict=None):
 
     if model_type in ("beam_gas_cross_sections", "beam-gas-cross-sections"):
         return BeamCrossSectionReaction(
-            isotope=cfg.get("isotope", "H"),
             background_density_m3=cfg.get("background_density_m3", 0.0),
             density_profile_file=cfg.get("density_profile_file", None),
             density_profile_direction=density_direction,
             fixed_cs=cfg.get("fixed_cs", False),
+            manual_cross_sections=cfg.get("manual_cross_sections", None),
         )
 
     raise ValueError(f"Unknown REACTION_MODEL type: {model_type}")

@@ -166,7 +166,8 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
         # We can also put the summary in the subfolder to keep results together
         summary_filename = f"summary_{output_subfolder}.csv"
         summary_path = os.path.join(output_dir_for_run, summary_filename)
-        output.save_summary_to_csv(original_meshes, deposited_power, object_names, summary_path)
+        output.save_summary_to_csv(original_meshes, deposited_power, object_names, summary_path,
+                                    per_species_power=per_species_power or None)
 
     # --- Save per-particle impact data if requested ---
     if any(save_impact_flags_per_mesh):

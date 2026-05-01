@@ -156,6 +156,34 @@ def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
     mesh.cell_data['Power_Density_W_m2'] = smoothed_density
     # Deposited_Power_W is intentionally left unchanged (conserved).
 
+    # --- Smooth per-species arrays if present --------------------------------------
+    species_stats = {}
+    for key in list(mesh.cell_data.keys()):
+        if key.startswith('Deposited_Power_W_') and key != 'Deposited_Power_W':
+            suffix = key[len('Deposited_Power_W_'):]
+            sp_power = np.array(mesh.cell_data[key], dtype=np.float64)
+            density_key = f'Power_Density_W_m2_{suffix}'
+            sp_density = np.zeros(n_cells, dtype=np.float64)
+            if density_key in mesh.cell_data:
+                sp_density = np.array(mesh.cell_data[density_key], dtype=np.float64)
+            else:
+                np.divide(sp_power, areas, out=sp_density, where=areas > 0)
+            sp_peak_before = float(sp_density.max()) if n_cells > 0 else 0.0
+            for j in range(n_small):
+                idx = neighbours_list[j]
+                sp_total = np.sum(sp_power[idx])
+                sp_area = np.sum(areas[idx])
+                if sp_area > 0:
+                    sp_density[small_indices[j]] = sp_total / sp_area
+                else:
+                    sp_density[small_indices[j]] = 0.0
+            mesh.cell_data[density_key] = sp_density
+            species_stats[suffix] = {
+                "total_power_W": float(np.sum(sp_power)),
+                "peak_density_before": sp_peak_before,
+                "peak_density_after": float(sp_density.max()),
+            }
+
     # Set the active scalar for ParaView convenience
     mesh.cell_data.active_scalars_name = 'Power_Density_W_m2'
 
@@ -174,6 +202,7 @@ def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
         "peak_density_after": float(smoothed_density.max()),
         "min_area_m2": float(areas.min()),
         "max_area_m2": float(areas.max()),
+        "species": species_stats,
     }
 
     return mesh, stats
