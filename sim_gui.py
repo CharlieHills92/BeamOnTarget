@@ -967,118 +967,125 @@ class SimGUI(tk.Tk):
         ef = self.cfg.get("EXTERNAL_FIELD", {})
         ef_type = ef.get("type", "zero")
 
+        # Parse initial per-component config
+        comps = ef.get("components", {})
+        # Legacy: translate old flat config into component dict
+        if not comps and ef_type != "zero":
+            bvec = ef.get("magnetic_field_t", [0.0, 0.0, 0.0])
+            evec = ef.get("electric_field_vpm", [0.0, 0.0, 0.0])
+            for i, key in enumerate(("Bx", "By", "Bz")):
+                if bvec[i] != 0:
+                    comps[key] = {"mode": "fixed", "value": bvec[i]}
+            if ef_type in ("rid_segment_y", "rid_piecewise"):
+                comps["Ey"] = {"mode": "rid_ey",
+                               "v_rid_v": ef.get("v_rid_v", 20e3),
+                               "x_min_m": ef.get("x_min_m", 5.4),
+                               "x_max_m": ef.get("x_max_m", 7.2)}
+            else:
+                for i, key in enumerate(("Ex", "Ey", "Ez")):
+                    if evec[i] != 0:
+                        comps[key] = {"mode": "fixed", "value": evec[i]}
+
+        # Helper to build one component row
+        _fld_filetypes = [("Field files", "*.fld"), ("All files", "*")]
+        self._field_comp_vars = {}   # key -> {mode_var, val_var, file_var}
+        self._field_comp_widgets = {}  # key -> {val_frame, file_frame, rid_frame}
+
+        def _make_comp_row(card, row, label, key, modes, init_cfg):
+            mode = init_cfg.get("mode", "zero")
+            mode_labels = {"zero": "None", "fixed": "Fixed value",
+                           "file": "Field file (.fld)", "rid_ey": "ERID (simplified)"}
+            init_mode = mode_labels.get(mode, "None")
+
+            ttk.Label(card, text=label, style="Card.TLabel").grid(
+                row=row, column=0, sticky="w", pady=3)
+            mode_var = tk.StringVar(value=init_mode)
+            ttk.Combobox(card, textvariable=mode_var, values=modes,
+                          state="readonly", width=18).grid(
+                row=row, column=1, sticky="w", padx=(8, 0), pady=3)
+
+            # Fixed value entry
+            val_var = tk.StringVar(value=str(init_cfg.get("value", 0.0)))
+            val_frm = ttk.Frame(card, style="Card.TFrame")
+            val_frm.grid(row=row, column=2, sticky="w", padx=(8, 0), pady=3)
+            ttk.Entry(val_frm, textvariable=val_var, width=12).pack(side="left")
+
+            # File path entry + browse
+            file_var = tk.StringVar(value=init_cfg.get("file", ""))
+            file_frm = ttk.Frame(card, style="Card.TFrame")
+            file_frm.grid(row=row, column=2, sticky="we", padx=(8, 0), pady=3)
+            ttk.Entry(file_frm, textvariable=file_var, width=28).pack(side="left", fill="x", expand=True)
+            ttk.Button(file_frm, text="Browse…", style="Secondary.TButton",
+                        command=lambda fv=file_var: self._browse_fld_file(fv)).pack(
+                            side="left", padx=(4, 0))
+
+            # RID params frame (only for Ey)
+            rid_frm = None
+            rid_vars = {}
+            if "ERID (simplified)" in modes:
+                rid_frm = ttk.Frame(card, style="Card.TFrame")
+                rid_frm.grid(row=row, column=2, sticky="w", padx=(8, 0), pady=3)
+                for rlbl, rkey, rdef in [("V:", "v_rid_v", 20000.0),
+                                          ("x_min:", "x_min_m", 5.4),
+                                          ("x_max:", "x_max_m", 7.2)]:
+                    ttk.Label(rid_frm, text=rlbl, style="Card.TLabel").pack(side="left")
+                    rv = tk.StringVar(value=str(init_cfg.get(rkey, rdef)))
+                    ttk.Entry(rid_frm, textvariable=rv, width=8).pack(side="left", padx=(2, 8))
+                    rid_vars[rkey] = rv
+
+            # Scale factor entry (shown for all non-None modes)
+            scale_var = tk.StringVar(value=str(init_cfg.get("scale", 1.0)))
+            scale_frm = ttk.Frame(card, style="Card.TFrame")
+            scale_frm.grid(row=row, column=3, sticky="e", padx=(8, 0), pady=3)
+            ttk.Label(scale_frm, text="×", style="Card.TLabel").pack(side="left")
+            ttk.Entry(scale_frm, textvariable=scale_var, width=6).pack(side="left", padx=(2, 0))
+
+            self._field_comp_vars[key] = {"mode": mode_var, "val": val_var,
+                                           "file": file_var, "rid": rid_vars,
+                                           "scale": scale_var}
+            self._field_comp_widgets[key] = {"val_frame": val_frm, "file_frame": file_frm,
+                                              "rid_frame": rid_frm, "scale_frame": scale_frm}
+
+            def _on_mode_change(*_, k=key):
+                m = self._field_comp_vars[k]["mode"].get()
+                w = self._field_comp_widgets[k]
+                w["val_frame"].grid() if m == "Fixed value" else w["val_frame"].grid_remove()
+                w["file_frame"].grid() if m == "Field file (.fld)" else w["file_frame"].grid_remove()
+                if w["rid_frame"]:
+                    w["rid_frame"].grid() if m == "ERID (simplified)" else w["rid_frame"].grid_remove()
+                w["scale_frame"].grid() if m != "None" else w["scale_frame"].grid_remove()
+
+            mode_var.trace_add("write", _on_mode_change)
+            _on_mode_change()
+
         # --- Magnetic Field card ---
         b_card = self._make_card(outer, "Magnetic Field", pady=(12, 10))
-
-        # Determine initial B-field mode from config
-        if ef_type in ("uniform", "rid_segment_y", "rid_piecewise"):
-            bvec = ef.get("magnetic_field_t", [0.0, 0.0, 0.0])
-            b_init = "Fixed field (T)" if any(v != 0 for v in bvec) else "No field"
-        else:
-            bvec = [0.0, 0.0, 0.0]
-            b_init = "No field"
-
-        row = 0
-        ttk.Label(b_card, text="Source:", style="Card.TLabel").grid(
-            row=row, column=0, sticky="w", pady=4)
-        self.var_bfield_mode = tk.StringVar(value=b_init)
-        b_combo = ttk.Combobox(b_card, textvariable=self.var_bfield_mode,
-                                values=["No field", "Fixed field (T)", "External B field"],
-                                state="readonly", width=20)
-        b_combo.grid(row=row, column=1, sticky="w", padx=(8, 0))
-
-        row += 1
-        self._b_fixed_frame = ttk.Frame(b_card, style="Card.TFrame")
-        self._b_fixed_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
-
-        ttk.Label(self._b_fixed_frame, text="Bx:", style="Card.TLabel").pack(side="left")
-        self.var_bx = tk.DoubleVar(value=bvec[0])
-        ttk.Entry(self._b_fixed_frame, textvariable=self.var_bx, width=10).pack(side="left", padx=(4, 12))
-
-        ttk.Label(self._b_fixed_frame, text="By:", style="Card.TLabel").pack(side="left")
-        self.var_by = tk.DoubleVar(value=bvec[1])
-        ttk.Entry(self._b_fixed_frame, textvariable=self.var_by, width=10).pack(side="left", padx=(4, 12))
-
-        ttk.Label(self._b_fixed_frame, text="Bz:", style="Card.TLabel").pack(side="left")
-        self.var_bz = tk.DoubleVar(value=bvec[2])
-        ttk.Entry(self._b_fixed_frame, textvariable=self.var_bz, width=10).pack(side="left", padx=(4, 0))
-
-        def _on_bfield_mode(*_):
-            show = self.var_bfield_mode.get() == "Fixed field (T)"
-            self._b_fixed_frame.grid() if show else self._b_fixed_frame.grid_remove()
-
-        self.var_bfield_mode.trace_add("write", _on_bfield_mode)
-        _on_bfield_mode()
-
-        b_card.columnconfigure(1, weight=1)
+        b_modes = ["None", "Fixed value", "Field file (.fld)"]
+        for i, (label, key) in enumerate([("Bx:", "Bx"), ("By:", "By"), ("Bz:", "Bz")]):
+            _make_comp_row(b_card, i, label, key, b_modes, comps.get(key, {}))
+        b_card.columnconfigure(2, weight=1)
 
         # --- Electric Field card ---
         e_card = self._make_card(outer, "Electric Field")
+        e_modes = ["None", "Fixed value", "Field file (.fld)"]
+        ey_modes = ["None", "Fixed value", "Field file (.fld)", "ERID (simplified)"]
+        for i, (label, key, modes) in enumerate([
+            ("Ex:", "Ex", e_modes), ("Ey:", "Ey", ey_modes), ("Ez:", "Ez", e_modes)
+        ]):
+            _make_comp_row(e_card, i, label, key, modes, comps.get(key, {}))
+        e_card.columnconfigure(2, weight=1)
 
-        # Determine initial E-field mode from config
-        if ef_type in ("rid_segment_y", "rid_piecewise"):
-            e_init = "ERID field (simplified)"
-            evec = [0.0, 0.0, 0.0]
-        elif ef_type == "uniform":
-            evec = ef.get("electric_field_vpm", [0.0, 0.0, 0.0])
-            e_init = "Fixed field (V/m)" if any(v != 0 for v in evec) else "No field"
-        else:
-            evec = [0.0, 0.0, 0.0]
-            e_init = "No field"
-
-        row = 0
-        ttk.Label(e_card, text="Source:", style="Card.TLabel").grid(
-            row=row, column=0, sticky="w", pady=4)
-        self.var_efield_mode = tk.StringVar(value=e_init)
-        e_combo = ttk.Combobox(e_card, textvariable=self.var_efield_mode,
-                                values=["No field", "Fixed field (V/m)",
-                                        "External E field", "ERID field (simplified)"],
-                                state="readonly", width=20)
-        e_combo.grid(row=row, column=1, sticky="w", padx=(8, 0))
-
-        # -- Fixed E-field entries --
-        row += 1
-        self._e_fixed_frame = ttk.Frame(e_card, style="Card.TFrame")
-        self._e_fixed_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
-
-        ttk.Label(self._e_fixed_frame, text="Ex:", style="Card.TLabel").pack(side="left")
-        self.var_ex = tk.DoubleVar(value=evec[0])
-        ttk.Entry(self._e_fixed_frame, textvariable=self.var_ex, width=10).pack(side="left", padx=(4, 12))
-
-        ttk.Label(self._e_fixed_frame, text="Ey:", style="Card.TLabel").pack(side="left")
-        self.var_ey = tk.DoubleVar(value=evec[1])
-        ttk.Entry(self._e_fixed_frame, textvariable=self.var_ey, width=10).pack(side="left", padx=(4, 12))
-
-        ttk.Label(self._e_fixed_frame, text="Ez:", style="Card.TLabel").pack(side="left")
-        self.var_ez = tk.DoubleVar(value=evec[2])
-        ttk.Entry(self._e_fixed_frame, textvariable=self.var_ez, width=10).pack(side="left", padx=(4, 0))
-
-        # -- RID field entries --
-        row += 1
-        self._rid_frame = ttk.Frame(e_card, style="Card.TFrame")
-        self._rid_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
-
-        ttk.Label(self._rid_frame, text="ERID panel voltage (V):", style="Card.TLabel").pack(side="left")
-        self.var_v_rid = tk.DoubleVar(value=ef.get("v_rid_v", self.cfg.get("V_RID_V", 20000.0)))
-        ttk.Entry(self._rid_frame, textvariable=self.var_v_rid, width=12).pack(side="left", padx=(4, 16))
-
-        ttk.Label(self._rid_frame, text="x_min (m):", style="Card.TLabel").pack(side="left")
-        self.var_rid_xmin = tk.DoubleVar(value=ef.get("x_min_m", 5.4))
-        ttk.Entry(self._rid_frame, textvariable=self.var_rid_xmin, width=10).pack(side="left", padx=(4, 16))
-
-        ttk.Label(self._rid_frame, text="x_max (m):", style="Card.TLabel").pack(side="left")
-        self.var_rid_xmax = tk.DoubleVar(value=ef.get("x_max_m", 7.2))
-        ttk.Entry(self._rid_frame, textvariable=self.var_rid_xmax, width=10).pack(side="left", padx=(4, 0))
-
-        def _on_efield_mode(*_):
-            mode = self.var_efield_mode.get()
-            self._e_fixed_frame.grid() if mode == "Fixed field (V/m)" else self._e_fixed_frame.grid_remove()
-            self._rid_frame.grid() if mode == "ERID field (simplified)" else self._rid_frame.grid_remove()
-
-        self.var_efield_mode.trace_add("write", _on_efield_mode)
-        _on_efield_mode()
-
-        e_card.columnconfigure(1, weight=1)
+    def _browse_fld_file(self, var):
+        p = filedialog.askopenfilename(
+            initialdir=os.path.dirname(__file__),
+            title="Select field file",
+            filetypes=[("Field files", "*.fld"), ("All files", "*")])
+        if p:
+            try:
+                rel = os.path.relpath(p, os.path.dirname(__file__))
+                var.set(rel)
+            except ValueError:
+                var.set(p)
 
     # ------------------------------------------------------------------
     #  REACTIONS tab
@@ -1299,7 +1306,10 @@ class SimGUI(tk.Tk):
     def _on_rxn_mouse_move(self, event):
         """Show value labels on every plotted line at the cursor x-coordinate."""
         for a in self._rxn_cursor_artists:
-            a.remove()
+            try:
+                a.remove()
+            except (NotImplementedError, ValueError):
+                pass
         self._rxn_cursor_artists.clear()
 
         if not self._rxn_fig.axes:
@@ -1369,6 +1379,7 @@ class SimGUI(tk.Tk):
         neu = "H⁰" if iso == "H" else "D⁰"
         pos = "H⁺" if iso == "H" else "D⁺"
 
+        self._rxn_cursor_artists.clear()
         self._rxn_fig.clear()
         ax = self._rxn_fig.add_subplot(111)
         ax.loglog(energy, sigma_ss, label=f"{neg}→{neu} (single strip)", linewidth=1.8)
@@ -1426,6 +1437,7 @@ class SimGUI(tk.Tk):
         dens = np.maximum(np.asarray(model._density_at_positions(positions),
                                       dtype=np.float64), 0.0)
 
+        self._rxn_cursor_artists.clear()
         self._rxn_fig.clear()
         ax = self._rxn_fig.add_subplot(111)
         ax.plot(distance, dens, color="tab:green", linewidth=2.0)
@@ -1517,6 +1529,7 @@ class SimGUI(tk.Tk):
                 nxt /= s
             fractions[i + 1] = nxt
 
+        self._rxn_cursor_artists.clear()
         self._rxn_fig.clear()
         ax = self._rxn_fig.add_subplot(111)
         ax.plot(distance, fractions[:, 0], label="H⁻/D⁻", linewidth=2.0)
@@ -2463,28 +2476,33 @@ class SimGUI(tk.Tk):
         d["EM_BVH_CHECKPOINT_DISTANCE_M"] = self.var_em_checkpoint.get()
         d["EM_BOUNDING_BOX_MIN_CORNER_M"] = self._parse_vec3(self.var_bbox_min.get())
         d["EM_BOUNDING_BOX_MAX_CORNER_M"] = self._parse_vec3(self.var_bbox_max.get())
-        # External field — compose from separate B / E selections
-        b_mode = self.var_bfield_mode.get()
-        e_mode = self.var_efield_mode.get()
-        bvec = [self.var_bx.get(), self.var_by.get(), self.var_bz.get()] \
-            if b_mode == "Fixed field (T)" else [0.0, 0.0, 0.0]
+        # External field — compose from per-component selections
+        _mode_map = {"None": "zero", "Fixed value": "fixed",
+                      "Field file (.fld)": "file", "ERID (simplified)": "rid_ey"}
+        components = {}
+        for key in ("Bx", "By", "Bz", "Ex", "Ey", "Ez"):
+            cv = self._field_comp_vars[key]
+            mode = _mode_map.get(cv["mode"].get(), "zero")
+            if mode == "zero":
+                continue
+            comp = {"mode": mode}
+            scale = float(cv["scale"].get())
+            if scale != 1.0:
+                comp["scale"] = scale
+            if mode == "fixed":
+                comp["value"] = float(cv["val"].get())
+            elif mode == "file":
+                comp["file"] = cv["file"].get()
+            elif mode == "rid_ey":
+                for rk in ("v_rid_v", "x_min_m", "x_max_m"):
+                    comp[rk] = float(cv["rid"][rk].get())
+            components[key] = comp
 
-        if e_mode == "ERID field (simplified)":
-            ef = {"type": "rid_segment_y",
-                  "v_rid_v": self.var_v_rid.get(),
-                  "x_min_m": self.var_rid_xmin.get(),
-                  "x_max_m": self.var_rid_xmax.get(),
-                  "magnetic_field_t": bvec}
-        elif e_mode == "Fixed field (V/m)" or b_mode == "Fixed field (T)":
-            evec = [self.var_ex.get(), self.var_ey.get(), self.var_ez.get()] \
-                if e_mode == "Fixed field (V/m)" else [0.0, 0.0, 0.0]
-            ef = {"type": "uniform",
-                  "electric_field_vpm": evec,
-                  "magnetic_field_t": bvec}
+        if components:
+            ef = {"type": "composite", "components": components}
         else:
             ef = {"type": "zero"}
         d["EXTERNAL_FIELD"] = ef
-        d["V_RID_V"] = self.var_v_rid.get()
         # Reaction model
         if is_em and self.var_reactions_enabled.get():
             dd_vec = self._parse_vec3(self.var_density_dir.get())
@@ -2608,28 +2626,41 @@ class SimGUI(tk.Tk):
         self.var_bbox_min.set(f"{bbox_min[0]}, {bbox_min[1]}, {bbox_min[2]}")
         bbox_max = c.get("EM_BOUNDING_BOX_MAX_CORNER_M") or [13.0, 0.5, 0.8]
         self.var_bbox_max.set(f"{bbox_max[0]}, {bbox_max[1]}, {bbox_max[2]}")
-        # Fields — B and E field cards
+        # Fields — per-component
         ef = c.get("EXTERNAL_FIELD", {})
         ef_type = ef.get("type", "zero")
-        # Magnetic field
-        bvec = ef.get("magnetic_field_t", [0.0, 0.0, 0.0])
-        if ef_type in ("uniform", "rid_segment_y", "rid_piecewise") and any(v != 0 for v in bvec):
-            self.var_bfield_mode.set("Fixed field (T)")
-        else:
-            self.var_bfield_mode.set("No field")
-        self.var_bx.set(bvec[0]); self.var_by.set(bvec[1]); self.var_bz.set(bvec[2])
-        # Electric field
-        if ef_type in ("rid_segment_y", "rid_piecewise"):
-            self.var_efield_mode.set("ERID field (simplified)")
-        elif ef_type == "uniform":
+        comps = ef.get("components", {})
+        # Legacy flat config
+        if not comps and ef_type != "zero":
+            bvec = ef.get("magnetic_field_t", [0.0, 0.0, 0.0])
             evec = ef.get("electric_field_vpm", [0.0, 0.0, 0.0])
-            self.var_efield_mode.set("Fixed field (V/m)" if any(v != 0 for v in evec) else "No field")
-            self.var_ex.set(evec[0]); self.var_ey.set(evec[1]); self.var_ez.set(evec[2])
-        else:
-            self.var_efield_mode.set("No field")
-        self.var_v_rid.set(ef.get("v_rid_v", c.get("V_RID_V", 20000.0)))
-        self.var_rid_xmin.set(ef.get("x_min_m", 5.4))
-        self.var_rid_xmax.set(ef.get("x_max_m", 7.2))
+            for i, key in enumerate(("Bx", "By", "Bz")):
+                if bvec[i] != 0:
+                    comps[key] = {"mode": "fixed", "value": bvec[i]}
+            if ef_type in ("rid_segment_y", "rid_piecewise"):
+                comps["Ey"] = {"mode": "rid_ey",
+                               "v_rid_v": ef.get("v_rid_v", 20e3),
+                               "x_min_m": ef.get("x_min_m", 5.4),
+                               "x_max_m": ef.get("x_max_m", 7.2)}
+            else:
+                for i, key in enumerate(("Ex", "Ey", "Ez")):
+                    if evec[i] != 0:
+                        comps[key] = {"mode": "fixed", "value": evec[i]}
+        _mode_labels = {"zero": "None", "fixed": "Fixed value",
+                         "file": "Field file (.fld)", "rid_ey": "ERID (simplified)"}
+        for key in ("Bx", "By", "Bz", "Ex", "Ey", "Ez"):
+            cv = self._field_comp_vars[key]
+            cfg_comp = comps.get(key, {})
+            mode = cfg_comp.get("mode", "zero")
+            cv["mode"].set(_mode_labels.get(mode, "None"))
+            cv["val"].set(str(cfg_comp.get("value", 0.0)))
+            cv["file"].set(cfg_comp.get("file", ""))
+            cv["scale"].set(str(cfg_comp.get("scale", 1.0)))
+            for rk in ("v_rid_v", "x_min_m", "x_max_m"):
+                if rk in cv["rid"]:
+                    cv["rid"][rk].set(str(cfg_comp.get(rk, {"v_rid_v": 20000.0,
+                                                              "x_min_m": 5.4,
+                                                              "x_max_m": 7.2}[rk])))
         # Reactions
         rm = c.get("REACTION_MODEL", {})
         self.var_bg_density.set(rm.get("background_density_m3", 0.0))
