@@ -178,42 +178,25 @@ def _process_particle_batch_ray(particle_batch, intersector, face_offsets, face_
         object_indices = np.searchsorted(face_offsets, index_tri_global, side='right') - 1
         local_tri_indices = index_tri_global - face_offsets[object_indices]
 
-        # Build sparse updates per object
+        # Build sparse updates per object — fully vectorized
         for obj_idx in np.unique(object_indices):
             mask = (object_indices == obj_idx)
             idxs = local_tri_indices[mask]
             vals = power_to_deposit[mask]
-            # Combine duplicates within this chunk for the same object to reduce work
             if idxs.size > 0:
-                # Sort by index, then sum duplicates
-                order = np.argsort(idxs)
-                idxs_sorted = idxs[order]
-                vals_sorted = vals[order]
-                # Run-length encode sum
-                unique_idxs = []
-                unique_vals = []
-                prev = None
-                acc = 0.0
-                for j in range(idxs_sorted.size):
-                    iidx = int(idxs_sorted[j])
-                    v = float(vals_sorted[j])
-                    if prev is None:
-                        prev = iidx; acc = v
-                    elif iidx == prev:
-                        acc += v
-                    else:
-                        unique_idxs.append(prev); unique_vals.append(acc)
-                        prev = iidx; acc = v
-                if prev is not None:
-                    unique_idxs.append(prev); unique_vals.append(acc)
-                sparse_updates[obj_idx] = (np.asarray(unique_idxs, dtype=np.int32), np.asarray(unique_vals, dtype=np.float32))
+                # Vectorized duplicate summation via bincount
+                n_faces = face_counts[obj_idx]
+                summed = np.bincount(idxs, weights=vals, minlength=n_faces)
+                nonzero = summed.nonzero()[0]
+                sparse_updates[obj_idx] = (nonzero.astype(np.int32),
+                                           summed[nonzero].astype(np.float32))
 
-            # --- Collect impact data for flagged objects ---
+            # --- Collect impact data for flagged objects (vectorized) ---
             if save_impact_flags[obj_idx]:
-                hit_count = int(mask.sum())
+                hit_rays = index_ray[mask]
+                hit_count = hit_rays.size
                 impact_records[obj_idx]['hit_count'] += hit_count
 
-                hit_rays = index_ray[mask]
                 hit_locs = locations[mask]
                 hit_dirs = ray_directions[hit_rays]
                 hit_energies = particle_energies_eV[hit_rays]
@@ -222,22 +205,18 @@ def _process_particle_batch_ray(particle_batch, intersector, face_offsets, face_
                 hit_src_indices = particle_source_indices[hit_rays]
                 hit_currents = particle_currents[hit_rays]
 
-                # Send ALL records from this chunk to the manager;
-                # the manager applies reservoir sampling for unbiased selection.
-                for k in range(hit_count):
-                    impact_records[obj_idx]['data'].append((
-                        int(hit_src_indices[k]),  # source_index
-                        hit_masses[k],            # mass_kg
-                        int(hit_charges[k]),       # charge_state
-                        hit_locs[k, 0],            # pos_x
-                        hit_locs[k, 1],            # pos_y
-                        hit_locs[k, 2],            # pos_z
-                        hit_dirs[k, 0],            # dir_x
-                        hit_dirs[k, 1],            # dir_y
-                        hit_dirs[k, 2],            # dir_z
-                        hit_energies[k],           # kinetic_energy_eV
-                        hit_currents[k],           # current_A
-                    ))
+                # Build records as a structured numpy array, then convert to list of tuples
+                records_array = np.column_stack([
+                    hit_src_indices.astype(np.float64),
+                    hit_masses,
+                    hit_charges.astype(np.float64),
+                    hit_locs,
+                    hit_dirs,
+                    hit_energies,
+                    hit_currents,
+                ])
+                impact_records[obj_idx]['data'].extend(
+                    [tuple(row) for row in records_array])
 
     return sparse_updates, impact_records
 
@@ -269,29 +248,30 @@ def run_simulation_single_hit(scene_mesh, face_offsets, face_counts, particle_so
     print(f"  - Target particle batch size: {int(particle_batch_size)}")
     
     intersector = trimesh.ray.ray_pyembree.RayMeshIntersector(scene_mesh)
-    particle_batches = list(_iter_particle_batches(particle_sources_list, particle_batch_size))
-    
+
+    # Count total batches for progress bar without materializing them all in memory
+    total_particles = sum(int(s.num_particles) for s in particle_sources_list)
+    total_batches = math.ceil(total_particles / particle_batch_size) if total_particles > 0 else 0
+
     # Progressive accumulation: avoid keeping all partial results in memory
     final_deposited_power = [np.zeros(count, dtype=np.float32) for count in face_counts]
 
     # Accumulators for impact data (reservoir sampling for unbiased selection)
     impact_data = _empty_impact_data(num_objects)
 
-    print("Processing Particle Batches (progressive combine)...")
-    with ThreadPoolExecutor(max_workers=n_jobs) as executor:
-        futures = [executor.submit(_process_particle_batch_ray, batch, intersector, face_offsets, face_counts,
-                                   deposition_model, save_impact_flags, max_impact_records)
-                   for batch in particle_batches]
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Processing Particle Batches"):
-            sparse_chunk, chunk_impacts = future.result()
-            # Apply sparse updates to the accumulator immediately
-            for obj_idx, (idxs, vals) in enumerate(sparse_chunk):
-                if idxs is None:
-                    continue
-                np.add.at(final_deposited_power[obj_idx], idxs, vals)
+    print(f"Processing ~{total_batches} Particle Batches (sequential, Embree uses all cores via TBB)...")
+    batch_iter = _iter_particle_batches(particle_sources_list, particle_batch_size)
+    for batch in tqdm(batch_iter, total=total_batches, desc="Processing Particle Batches"):
+        sparse_chunk, chunk_impacts = _process_particle_batch_ray(
+            batch, intersector, face_offsets, face_counts,
+            deposition_model, save_impact_flags, max_impact_records)
+        # Apply sparse updates to the accumulator immediately
+        for obj_idx, (idxs, vals) in enumerate(sparse_chunk):
+            if idxs is None:
+                continue
+            np.add.at(final_deposited_power[obj_idx], idxs, vals)
+        _merge_impact_records(impact_data, chunk_impacts, save_impact_flags, max_impact_records)
 
-            _merge_impact_records(impact_data, chunk_impacts, save_impact_flags, max_impact_records)
-            
     total_deposited = sum(arr.sum() for arr in final_deposited_power)
     print(f"Total power deposited: {total_deposited:.2f} W")
 
@@ -364,13 +344,16 @@ def run_simulation_em_track_then_bvh(
         )
 
     intersector = trimesh.ray.ray_pyembree.RayMeshIntersector(scene_mesh)
-    particle_batches = list(_iter_particle_batches(particle_sources_list, particle_batch_size))
+
+    # Count total batches for progress bar without materializing all in memory
+    total_particles = sum(int(s.num_particles) for s in particle_sources_list)
+    total_batches = math.ceil(total_particles / particle_batch_size) if total_particles > 0 else 0
 
     final_deposited_power = [np.zeros(count, dtype=np.float32) for count in face_counts]
     per_species_power = {}  # {charge_state: [np.zeros per object]}
     impact_data = _empty_impact_data(num_objects)
 
-    print("Processing particle batches (Phase 1 EM tracing + Phase 2 BVH)...")
+    print(f"Processing ~{total_batches} particle batches (Phase 1 EM tracing + Phase 2 BVH)...")
 
     def _process_particle_batch_em(batch, seed):
         perf_stats = {
@@ -489,28 +472,56 @@ def run_simulation_em_track_then_bvh(
         "final_bvh_s": 0.0,
     }
 
-    with ThreadPoolExecutor(max_workers=n_jobs) as executor:
-        futures = [executor.submit(_process_particle_batch_em, batch, i)
-                   for i, batch in enumerate(particle_batches)]
+    # Cap concurrency: EM workers are memory-heavy (trajectory storage)
+    effective_workers = min(n_jobs, max(total_batches, 1), 4)
+    # Feed batches lazily: only keep 'effective_workers' batches in flight at once
+    with ThreadPoolExecutor(max_workers=effective_workers) as executor:
+        futures = {}
+        batch_iter = _iter_particle_batches(particle_sources_list, particle_batch_size)
+        batches_submitted = 0
 
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Processing Particle Batches"):
-            sparse_updates, chunk_impacts, chunk_perf, chunk_species = future.result()
-            for obj_idx, (idxs, vals) in enumerate(sparse_updates):
-                if idxs is None:
-                    continue
-                np.add.at(final_deposited_power[obj_idx], idxs, vals)
-            # Accumulate per-species power
-            for cs, sp_list in chunk_species.items():
-                if cs not in per_species_power:
-                    per_species_power[cs] = [np.zeros(count, dtype=np.float32) for count in face_counts]
-                for obj_idx, (idxs, vals) in enumerate(sp_list):
-                    if idxs is None:
-                        continue
-                    np.add.at(per_species_power[cs][obj_idx], idxs, vals)
-            _merge_impact_records(impact_data, chunk_impacts, save_impact_flags, max_impact_records)
-            if perf_enabled:
-                for key in perf_totals:
-                    perf_totals[key] += chunk_perf.get(key, 0.0)
+        # Prime the pool with initial batches
+        for batch in batch_iter:
+            futures[executor.submit(_process_particle_batch_em, batch, batches_submitted)] = None
+            batches_submitted += 1
+            if batches_submitted >= effective_workers * 2:
+                break
+
+        with tqdm(total=total_batches, desc="Processing Particle Batches") as pbar:
+            while futures:
+                done_futures = []
+                for future in as_completed(futures):
+                    done_futures.append(future)
+                    break  # process one at a time to keep memory bounded
+
+                for future in done_futures:
+                    del futures[future]
+                    sparse_updates, chunk_impacts, chunk_perf, chunk_species = future.result()
+                    for obj_idx, (idxs, vals) in enumerate(sparse_updates):
+                        if idxs is None:
+                            continue
+                        np.add.at(final_deposited_power[obj_idx], idxs, vals)
+                    # Accumulate per-species power
+                    for cs, sp_list in chunk_species.items():
+                        if cs not in per_species_power:
+                            per_species_power[cs] = [np.zeros(count, dtype=np.float32) for count in face_counts]
+                        for obj_idx, (idxs, vals) in enumerate(sp_list):
+                            if idxs is None:
+                                continue
+                            np.add.at(per_species_power[cs][obj_idx], idxs, vals)
+                    _merge_impact_records(impact_data, chunk_impacts, save_impact_flags, max_impact_records)
+                    if perf_enabled:
+                        for key in perf_totals:
+                            perf_totals[key] += chunk_perf.get(key, 0.0)
+                    pbar.update(1)
+
+                    # Submit next batch from the generator to keep pipeline full
+                    try:
+                        next_batch = next(batch_iter)
+                        futures[executor.submit(_process_particle_batch_em, next_batch, batches_submitted)] = None
+                        batches_submitted += 1
+                    except StopIteration:
+                        pass
 
     total_deposited = sum(arr.sum() for arr in final_deposited_power)
     print(f"Total power deposited: {total_deposited:.2f} W")
