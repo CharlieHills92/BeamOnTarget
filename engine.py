@@ -142,8 +142,32 @@ def _process_particle_batch_ray(particle_batch, intersector, face_offsets, face_
     particle_source_indices = particle_batch["source_indices"]
     particle_currents = particle_batch["currents_a"]
 
-    locations, index_ray, index_tri_global = intersector.intersects_location(
-        ray_origins=ray_origins, ray_directions=ray_directions, multiple_hits=False)
+    # Sub-chunk the ray intersection to avoid memory allocation failures inside trimesh
+    _RAY_SUB_CHUNK = 500_000
+    n_rays = ray_origins.shape[0]
+    if n_rays <= _RAY_SUB_CHUNK:
+        locations, index_ray, index_tri_global = intersector.intersects_location(
+            ray_origins=ray_origins, ray_directions=ray_directions, multiple_hits=False)
+    else:
+        loc_parts, iray_parts, itri_parts = [], [], []
+        for start in range(0, n_rays, _RAY_SUB_CHUNK):
+            end = min(start + _RAY_SUB_CHUNK, n_rays)
+            locs_c, iray_c, itri_c = intersector.intersects_location(
+                ray_origins=ray_origins[start:end],
+                ray_directions=ray_directions[start:end],
+                multiple_hits=False)
+            if len(locs_c) > 0:
+                loc_parts.append(locs_c)
+                iray_parts.append(iray_c + start)  # offset ray indices
+                itri_parts.append(itri_c)
+        if loc_parts:
+            locations = np.concatenate(loc_parts, axis=0)
+            index_ray = np.concatenate(iray_parts, axis=0)
+            index_tri_global = np.concatenate(itri_parts, axis=0)
+        else:
+            locations = np.empty((0, 3), dtype=np.float64)
+            index_ray = np.empty(0, dtype=np.intp)
+            index_tri_global = np.empty(0, dtype=np.intp)
     
     if len(locations) > 0:
         colliding_particle_power = particle_powers[index_ray]

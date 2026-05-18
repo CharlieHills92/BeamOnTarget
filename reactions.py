@@ -39,7 +39,7 @@ class BeamCrossSectionReaction(ReactionModel):
         density_profile_direction=(1.0, 0.0, 0.0),
         fixed_cs=False,
         manual_cross_sections=None,
-        verbose=True,
+        verbose=False,
     ):
         self.background_density_m3 = float(background_density_m3)
         self.density_profile_file = density_profile_file

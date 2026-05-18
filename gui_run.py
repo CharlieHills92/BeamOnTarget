@@ -273,6 +273,8 @@ class RunTab(ttk.Frame):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1)
         for line in self._sim_process.stdout:
             log_fn(line)

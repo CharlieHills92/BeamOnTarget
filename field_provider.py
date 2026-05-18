@@ -30,14 +30,29 @@ class GridFieldComponent:
 
     File format:  x, y, z, value  (one row per grid point, comma-separated).
     The grid must be rectilinear (structured) but spacing need not be uniform.
-    Points outside the grid are extrapolated to the nearest boundary value.
+    Points outside the grid are extrapolated to zero.
     """
 
     def __init__(self, filepath):
         resolved = filepath
         if not os.path.isabs(filepath):
             resolved = os.path.join(os.path.dirname(__file__), filepath)
-        data = np.loadtxt(resolved, delimiter=',', dtype=np.float64)
+        # Skip header rows that cannot be parsed as floats
+        skip = 0
+        with open(resolved, 'r') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    skip += 1
+                    continue
+                try:
+                    float(line.split(',')[0])
+                except ValueError:
+                    skip += 1
+                    continue
+                break
+        data = np.loadtxt(resolved, delimiter=',', dtype=np.float64,
+                          skiprows=skip)
         if data.ndim != 2 or data.shape[1] < 4:
             raise ValueError(f"Expected 4 columns (x,y,z,value) in {filepath}, "
                              f"got shape {data.shape}")
@@ -63,7 +78,7 @@ class GridFieldComponent:
             (xs, ys, zs), values,
             method='linear',
             bounds_error=False,
-            fill_value=None,  # nearest-neighbour extrapolation
+            fill_value=0.0,  # extrapolate to zero outside the grid 
         )
         self._path = resolved
         print(f"  GridFieldComponent: loaded {filepath} — "

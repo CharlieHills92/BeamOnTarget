@@ -8,7 +8,6 @@ widget internals.
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import os
-import glob
 
 import numpy as np
 
@@ -88,6 +87,21 @@ class FieldsTab(ttk.Frame):
 
         # --- Larmor Radius estimate card ---
         lr_card = make_card(self, "Larmor Radius Estimate")
+
+        param_row = ttk.Frame(lr_card, style="Card.TFrame")
+        param_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(param_row, text="Species:",
+                  style="Card.TLabel").pack(side="left", padx=(0, 4))
+        self.var_lr_species = tk.StringVar(value="H")
+        ttk.Combobox(param_row, textvariable=self.var_lr_species,
+                      values=["H", "D"], state="readonly", width=4).pack(
+            side="left", padx=(0, 12))
+        ttk.Label(param_row, text="Energy [eV]:",
+                  style="Card.TLabel").pack(side="left", padx=(0, 4))
+        self.var_lr_energy = tk.DoubleVar(value=870e3)
+        ttk.Entry(param_row, textvariable=self.var_lr_energy, width=12).pack(
+            side="left")
+
         lr_row = ttk.Frame(lr_card, style="Card.TFrame")
         lr_row.pack(fill="x")
         ttk.Button(lr_row, text="Calculate", style="Secondary.TButton",
@@ -101,88 +115,43 @@ class FieldsTab(ttk.Frame):
     #  Larmor radius estimate
     # ------------------------------------------------------------------
     def _calc_larmor_radius(self):
-        """Estimate Larmor radius from current field config + particle sources."""
+        """Estimate Larmor radius from current field config + user-specified species/energy."""
         if not self._get_collect:
             self._var_larmor.set("(no config callback)")
             return
         try:
-            cfg = self._get_collect()
-            sources = self._load_sources(cfg)
-            if not sources:
-                self._var_larmor.set("No particle sources found.")
-                return
-
-            from constants import ELEMENTARY_CHARGE_C
+            from constants import (ELEMENTARY_CHARGE_C,
+                                   HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG)
             from field_provider import create_field_provider
 
-            # Weighted averages over sources
-            total_w = 0.0
-            w_speed = 0.0
-            w_mass = 0.0
-            w_absq = 0.0
-            positions = []
-            for src in sources:
-                w = float(max(int(getattr(src, "num_particles", 0)), 0))
-                if w <= 0:
-                    continue
-                e_min, e_max = getattr(src, "energy_range", (0.0, 0.0))
-                e_avg = 0.5 * (float(e_min) + float(e_max))
-                mass = float(getattr(src, "mass", 0.0))
-                absq = abs(float(getattr(src, "charge_state", 0.0)))
-                speed = np.sqrt(2.0 * max(e_avg, 0.0) * ELEMENTARY_CHARGE_C / mass) if mass > 0 else 0.0
-                w_speed += w * speed
-                w_mass += w * max(mass, 0.0)
-                w_absq += w * absq
-                total_w += w
-                try:
-                    c, _ = src.get_visualization_repr()
-                    positions.append(np.asarray(c, dtype=np.float64))
-                except Exception:
-                    pass
-
-            if total_w <= 0:
-                self._var_larmor.set("No weighted sources.")
+            species = self.var_lr_species.get()
+            energy_ev = self.var_lr_energy.get()
+            if energy_ev <= 0:
+                self._var_larmor.set("Energy must be > 0")
                 return
 
-            avg_speed = w_speed / total_w
-            avg_mass = w_mass / total_w
-            avg_absq = w_absq / total_w
+            mass = HYDROGEN_MASS_KG if species == "H" else DEUTERIUM_MASS_KG
+            q_c = ELEMENTARY_CHARGE_C          # |charge| = 1 e
+            speed = np.sqrt(2.0 * energy_ev * ELEMENTARY_CHARGE_C / mass)
 
-            # Sample B field at source positions
+            # Sample B field on a coarse grid through the bbox
+            cfg = self._get_collect()
             ef_cfg = cfg.get("EXTERNAL_FIELD", {})
             fp = create_field_provider(ef_cfg)
-            pts = np.vstack(positions) if positions else np.zeros((1, 3))
+            pts = np.zeros((1, 3))             # sample at origin
             _, b_field = fp.sample(pts, np.zeros(len(pts)))
             b_norm = np.linalg.norm(np.asarray(b_field, dtype=np.float64), axis=1)
             max_b = float(np.max(b_norm)) if b_norm.size > 0 else 0.0
 
-            q_c = avg_absq * ELEMENTARY_CHARGE_C
-            if q_c <= 0:
-                self._var_larmor.set("Larmor radius: undefined (|q| = 0)")
-            elif max_b <= 0:
-                self._var_larmor.set("Larmor radius: ∞ (|B| = 0)")
+            if max_b <= 0:
+                self._var_larmor.set("r_L = ∞  (|B| = 0)")
             else:
-                r_l = avg_mass * avg_speed / (q_c * max_b)
+                r_l = mass * speed / (q_c * max_b)
                 self._var_larmor.set(
-                    f"r_L ≈ {r_l:.4e} m   |   avg v = {avg_speed:.3e} m/s   |   max |B| = {max_b:.3e} T"
+                    f"r_L ≈ {r_l:.4e} m   |   v = {speed:.3e} m/s   |   |B| = {max_b:.3e} T"
                 )
         except Exception as exc:
             self._var_larmor.set(f"Error: {exc}")
-
-    @staticmethod
-    def _load_sources(cfg):
-        """Load particle sources from .bl files referenced in config."""
-        import particles
-        src_dir = cfg.get("PARTICLE_SOURCE_DIR", "BEAM_CONFIGS")
-        src_abs = os.path.join(_SCRIPT_DIR, src_dir) if not os.path.isabs(src_dir) else src_dir
-        bl_files = sorted(glob.glob(os.path.join(src_abs, "*.bl")))
-        npb = cfg.get("NUM_PARTICLES_PER_BEAMLET", 10001)
-        radius = cfg.get("BEAMLET_RADIUS_M", 0.007)
-        area = np.pi * radius ** 2
-        all_sources = []
-        for bf in bl_files:
-            all_sources.extend(particles.load_beamlets_from_file(bf, npb, area))
-        return all_sources
 
     # ------------------------------------------------------------------
     #  Build one component row

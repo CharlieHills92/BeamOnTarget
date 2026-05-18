@@ -556,56 +556,26 @@ class ReactionsTab(ttk.Frame):
     #  Mean free path estimate
     # ------------------------------------------------------------------
     def _calc_mean_free_path(self):
-        """Estimate minimum mean free path from reaction config + particle sources."""
+        """Estimate minimum mean free path from reaction config + user-specified species/energy."""
         if not self._get_collect:
             self._var_mfp.set("(no config callback)")
             return
         try:
             import cross_sections as cs
-            import glob as _glob
-            import particles
-            from constants import ELEMENTARY_CHARGE_C
             from reactions import BeamCrossSectionReaction
             from prerun_analysis import _ray_exit_distance_from_box
 
-            cfg = self._get_collect()
             bbox_min = self._get_bbox_min()
             bbox_max = self._get_bbox_max()
 
-            # Load particle sources
-            src_dir = cfg.get("PARTICLE_SOURCE_DIR", "BEAM_CONFIGS")
-            src_abs = os.path.join(_SCRIPT_DIR, src_dir) if not os.path.isabs(src_dir) else src_dir
-            bl_files = sorted(_glob.glob(os.path.join(src_abs, "*.bl")))
-            npb = cfg.get("NUM_PARTICLES_PER_BEAMLET", 10001)
-            radius = cfg.get("BEAMLET_RADIUS_M", 0.007)
-            area = np.pi * radius ** 2
-            sources = []
-            for bf in bl_files:
-                sources.extend(particles.load_beamlets_from_file(bf, npb, area))
-            if not sources:
-                self._var_mfp.set("No particle sources found.")
+            # Species and energy from user fields
+            isotope = self.var_plot_species.get()
+            avg_energy_ev = self.var_plot_energy.get()
+            if avg_energy_ev <= 0:
+                self._var_mfp.set("Energy must be > 0")
                 return
 
-            # Weighted average energy
-            total_w = 0.0
-            w_energy = 0.0
-            for src in sources:
-                w = float(max(int(getattr(src, "num_particles", 0)), 0))
-                if w <= 0:
-                    continue
-                e_min, e_max = getattr(src, "energy_range", (0.0, 0.0))
-                w_energy += w * 0.5 * (float(e_min) + float(e_max))
-                total_w += w
-            if total_w <= 0:
-                self._var_mfp.set("No weighted sources.")
-                return
-            avg_energy_ev = w_energy / total_w
-
-            # Get isotope from reaction config
-            rm = cfg.get("REACTION_MODEL", {})
-            isotope = rm.get("isotope", "H")
-
-            # Cross sections at average energy
+            # Cross sections at specified energy
             sigma = cs.channel_cross_sections(avg_energy_ev, isotope=isotope)
             sigma_neg = float(np.asarray(sigma[cs.CH_SINGLE_STRIP])) + \
                         float(np.asarray(sigma[cs.CH_DOUBLE_STRIP]))

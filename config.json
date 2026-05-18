@@ -23,12 +23,12 @@
         },
         "CAL": {
             "scale": 1.0,
-            "target_length": 0.5,
+            "target_length": 1.0,
             "save_details": true,
             "is_diagnostic": false,
             "save_impact_data": false,
             "show_in_plot": false,
-            "max_impact_records": 10000
+            "max_impact_records": null
         }
     },
     "PARTICLE_SOURCE_DIR": "BEAM_CONFIGS",
@@ -59,15 +59,15 @@
         0.0
     ],
     "EXTERNAL_FIELD": {
-        "type": "rid_segment_y",
-        "v_rid_v": 20000.0,
-        "x_min_m": 5.4,
-        "x_max_m": 7.2,
-        "magnetic_field_t": [
-            0.0,
-            0.0,
-            0.0
-        ]
+        "type": "composite",
+        "components": {
+            "Ey": {
+                "mode": "rid_ey",
+                "v_rid_v": 20000.0,
+                "x_min_m": 5.4,
+                "x_max_m": 7.2
+            }
+        }
     },
     "REACTION_MODEL": {
         "type": "none"
