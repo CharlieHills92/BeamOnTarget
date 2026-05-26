@@ -248,6 +248,12 @@ class ResultsTab(ttk.Frame):
         self._csv_canvas_mpl = FigureCanvasTkAgg(self._csv_fig, plot_frm)
         self._csv_canvas_mpl.get_tk_widget().pack(fill="both", expand=True)
 
+        # Hover metadata/artist for interactive value labels on bars.
+        self._csv_bar_hover_targets = {"peak": [], "power": []}
+        self._csv_hover_annot = None
+        self._csv_canvas_mpl.mpl_connect("motion_notify_event", self._on_csv_plot_hover)
+        self._csv_canvas_mpl.mpl_connect("figure_leave_event", self._on_csv_plot_leave)
+
         self._csv_ax_peak.set_title("Peak Heat Load [W/m²]", fontsize=10)
         self._csv_ax_power.set_title("Total Power [W]", fontsize=10)
         self._csv_fig.tight_layout()
@@ -298,6 +304,70 @@ class ResultsTab(ttk.Frame):
     # ------------------------------------------------------------------
     #  Component checklist
     # ------------------------------------------------------------------
+    def _clear_csv_hover(self):
+        if self._csv_hover_annot is not None:
+            try:
+                self._csv_hover_annot.remove()
+            except Exception:
+                pass
+            self._csv_hover_annot = None
+
+    def _on_csv_plot_leave(self, _event):
+        self._clear_csv_hover()
+        self._csv_canvas_mpl.draw_idle()
+
+    def _on_csv_plot_hover(self, event):
+        ax_peak = self._csv_ax_peak
+        ax_power = self._csv_ax_power
+
+        if event.inaxes == ax_peak:
+            targets = self._csv_bar_hover_targets.get("peak", [])
+            unit = "W/m²"
+        elif event.inaxes == ax_power:
+            targets = self._csv_bar_hover_targets.get("power", [])
+            unit = "W"
+        else:
+            if self._csv_hover_annot is not None:
+                self._clear_csv_hover()
+                self._csv_canvas_mpl.draw_idle()
+            return
+
+        hit = None
+        for item in targets:
+            contains, _ = item["patch"].contains(event)
+            if contains:
+                hit = item
+                break
+
+        if hit is None:
+            if self._csv_hover_annot is not None:
+                self._clear_csv_hover()
+                self._csv_canvas_mpl.draw_idle()
+            return
+
+        patch = hit["patch"]
+        x = patch.get_x() + patch.get_width() * 0.5
+        y = patch.get_height()
+        txt = f"{hit['obj']}\n{hit['sim']}\n{hit['value']:.3e} {unit}"
+
+        if self._csv_hover_annot is None or self._csv_hover_annot.axes != event.inaxes:
+            self._clear_csv_hover()
+            self._csv_hover_annot = event.inaxes.annotate(
+                txt,
+                xy=(x, y),
+                xytext=(10, 8),
+                textcoords="offset points",
+                fontsize=8,
+                color="#111827",
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="#64748b", alpha=0.9),
+                zorder=20,
+            )
+        else:
+            self._csv_hover_annot.xy = (x, y)
+            self._csv_hover_annot.set_text(txt)
+
+        self._csv_canvas_mpl.draw_idle()
+
     def _refresh_chart_comp_list(self):
         all_objects = []
         for entries in self._csv_plot_data.values():
@@ -543,6 +613,8 @@ class ResultsTab(ttk.Frame):
         ax_power = self._csv_ax_power
         ax_peak.clear()
         ax_power.clear()
+        self._csv_bar_hover_targets = {"peak": [], "power": []}
+        self._clear_csv_hover()
 
         data = self._csv_plot_data
         if not data:
@@ -624,12 +696,21 @@ class ResultsTab(ttk.Frame):
 
             offset = (si - (n_sims - 1) / 2) * bar_width
             label = sim if len(sim) <= 30 else sim[:27] + "…"
-            ax_peak.bar(x + offset, peaks, bar_width * 0.9,
-                        label=label, color=colours[si], edgecolor="white",
-                        linewidth=0.5)
-            ax_power.bar(x + offset, powers, bar_width * 0.9,
-                         label=label, color=colours[si], edgecolor="white",
-                         linewidth=0.5)
+            peak_bars = ax_peak.bar(x + offset, peaks, bar_width * 0.9,
+                                    label=label, color=colours[si], edgecolor="white",
+                                    linewidth=0.5)
+            power_bars = ax_power.bar(x + offset, powers, bar_width * 0.9,
+                                       label=label, color=colours[si], edgecolor="white",
+                                       linewidth=0.5)
+
+            for obj, val, patch in zip(all_objects, peaks, peak_bars.patches):
+                self._csv_bar_hover_targets["peak"].append(
+                    {"patch": patch, "value": float(val), "obj": obj, "sim": sim}
+                )
+            for obj, val, patch in zip(all_objects, powers, power_bars.patches):
+                self._csv_bar_hover_targets["power"].append(
+                    {"patch": patch, "value": float(val), "obj": obj, "sim": sim}
+                )
 
         display_labels = []
         for obj in all_objects:

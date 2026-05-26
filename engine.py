@@ -259,7 +259,7 @@ def run_simulation_single_hit(scene_mesh, face_offsets, face_counts, particle_so
     # Accumulators for impact data (reservoir sampling for unbiased selection)
     impact_data = _empty_impact_data(num_objects)
 
-    print(f"Processing ~{total_batches} Particle Batches (sequential, Embree uses all cores via TBB)...")
+    print(f"Processing ~{total_batches} Particle Batches (sequential)...")
     batch_iter = _iter_particle_batches(particle_sources_list, particle_batch_size)
     for batch in tqdm(batch_iter, total=total_batches, desc="Processing Particle Batches"):
         sparse_chunk, chunk_impacts = _process_particle_batch_ray(
