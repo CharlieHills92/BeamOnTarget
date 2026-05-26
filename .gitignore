@@ -2,11 +2,21 @@ venv/
 __pycache__/
 *.pyc
 OUTPUT/
+OUTPUT_BENCH/
+OUTPUT_CHECKPOINT1M/
+OUTPUT_SPECIES_TEST/
+OUTPUT_SPECIES_TEST2/
+OUTPUT_SWEEP/
 geometry_cache/
+geometry_cache_DNB/
+geometry_cache_real/
 DUMMY/
 .pv_temp_script.py
 build/
 dist/
 *.egg-info/
 logs/
+profile_*.log
+prof_output_*.txt
+DDBELLOW_STUDY/OUTPUT*/
 

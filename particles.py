@@ -27,27 +27,35 @@ class ParticleSource:
         self.charge_state = charge_state
         self.source_index = int(source_index)
 
-    def generate(self):
+    def generate(self, num_particles=None):
         """Generates and returns all particle property arrays. Must be implemented by subclasses."""
         raise NotImplementedError("Each particle source must have a generate() method.")
+
+    def _resolve_particle_count(self, num_particles=None):
+        """Return the number of macro-particles to generate for this call."""
+        if num_particles is None:
+            return self.num_particles
+        return max(0, min(int(num_particles), self.num_particles))
 
     def get_visualization_repr(self):
         """Returns the center point and primary direction vector for visualization."""
         raise NotImplementedError("Subclass must implement get_visualization_repr.")
 
-    def _generate_energy(self):
+    def _generate_energy(self, num_particles=None):
         """Generates random energy values for the particles in eV."""
-        return np.random.uniform(self.energy_range[0], self.energy_range[1], self.num_particles)
+        count = self._resolve_particle_count(num_particles)
+        return np.random.uniform(self.energy_range[0], self.energy_range[1], count)
 
-    def _generate_current(self):
+    def _generate_current(self, num_particles=None):
         """Calculates the current carried by each individual macro-particle."""
+        count = self._resolve_particle_count(num_particles)
         if self.num_particles > 0:
-            return np.full(self.num_particles, self.total_current / self.num_particles)
-        return np.full(self.num_particles, 0.0)
+            return np.full(count, self.total_current / self.num_particles)
+        return np.full(count, 0.0)
 
-    def _generate_charge_state(self):
+    def _generate_charge_state(self, num_particles=None):
         """Generates the charge state for each particle."""
-        return np.full(self.num_particles, self.charge_state, dtype=int)
+        return np.full(self._resolve_particle_count(num_particles), self.charge_state, dtype=int)
 
     def _generate_power(self, particle_energies_eV, particle_currents):
         """Calculates the power of each particle in Watts: P = E [eV] * I [A] / |q|."""
@@ -66,16 +74,17 @@ class PlanarBeam(ParticleSource):
     def get_visualization_repr(self):
         return self.center, self.direction
 
-    def generate(self):
+    def generate(self, num_particles=None):
+        count = self._resolve_particle_count(num_particles)
         u_vec = np.array([0.0, 1.0, 0.0]) if not np.allclose(self.direction, [0,1,0]) else np.array([1.0, 0.0, 0.0])
         v_vec = np.cross(self.direction, u_vec); v_vec /= np.linalg.norm(v_vec)
         u_vec = np.cross(v_vec, self.direction)
-        rand_u = np.random.uniform(-self.size[0] / 2, self.size[0] / 2, self.num_particles)
-        rand_v = np.random.uniform(-self.size[1] / 2, self.size[1] / 2, self.num_particles)
+        rand_u = np.random.uniform(-self.size[0] / 2, self.size[0] / 2, count)
+        rand_v = np.random.uniform(-self.size[1] / 2, self.size[1] / 2, count)
         ray_origins = self.center + rand_u[:, np.newaxis] * u_vec + rand_v[:, np.newaxis] * v_vec
-        ray_directions = np.tile(self.direction, (self.num_particles, 1))
-        particle_energies_eV = self._generate_energy(); particle_currents = self._generate_current()
-        particle_charge_states = self._generate_charge_state()
+        ray_directions = np.tile(self.direction, (count, 1))
+        particle_energies_eV = self._generate_energy(count); particle_currents = self._generate_current(count)
+        particle_charge_states = self._generate_charge_state(count)
         particle_powers = self._generate_power(particle_energies_eV, particle_currents)
         return ray_origins, ray_directions, particle_powers, particle_energies_eV, particle_currents, particle_charge_states
 
@@ -91,9 +100,10 @@ class ConicalBeam(ParticleSource):
     def get_visualization_repr(self):
         return self.origin, self.axis
 
-    def generate(self):
-        z = np.random.uniform(np.cos(self.cone_angle_rad / 2), 1, self.num_particles)
-        theta = np.random.uniform(0, 2 * np.pi, self.num_particles)
+    def generate(self, num_particles=None):
+        count = self._resolve_particle_count(num_particles)
+        z = np.random.uniform(np.cos(self.cone_angle_rad / 2), 1, count)
+        theta = np.random.uniform(0, 2 * np.pi, count)
         phi = np.arccos(z)
         x, y = np.sin(phi) * np.cos(theta), np.sin(phi) * np.sin(theta)
         up = np.array([0.0, 0.0, 1.0]); rot_axis = np.cross(up, self.axis)
@@ -105,9 +115,9 @@ class ConicalBeam(ParticleSource):
             rotation_matrix = np.eye(3) + s * K + (1 - c) * np.dot(K, K)
         local_dirs = np.vstack([x, y, z]).T
         ray_directions = np.dot(local_dirs, rotation_matrix.T)
-        ray_origins = np.tile(self.origin, (self.num_particles, 1))
-        particle_energies_eV = self._generate_energy(); particle_currents = self._generate_current()
-        particle_charge_states = self._generate_charge_state()
+        ray_origins = np.tile(self.origin, (count, 1))
+        particle_energies_eV = self._generate_energy(count); particle_currents = self._generate_current(count)
+        particle_charge_states = self._generate_charge_state(count)
         particle_powers = self._generate_power(particle_energies_eV, particle_currents)
         return ray_origins, ray_directions, particle_powers, particle_energies_eV, particle_currents, particle_charge_states
 
@@ -123,16 +133,17 @@ class GaussianBeam(ParticleSource):
     def get_visualization_repr(self):
         return self.center, self.direction
 
-    def generate(self):
+    def generate(self, num_particles=None):
+        count = self._resolve_particle_count(num_particles)
         u_vec = np.array([0.0, 1.0, 0.0]) if not np.allclose(self.direction, [0, 1, 0]) else np.array([1.0, 0.0, 0.0])
         v_vec = np.cross(self.direction, u_vec); v_vec /= np.linalg.norm(v_vec)
         u_vec = np.cross(v_vec, self.direction)
-        rand_u = np.random.normal(loc=0.0, scale=self.sigma[0], size=self.num_particles)
-        rand_v = np.random.normal(loc=0.0, scale=self.sigma[1], size=self.num_particles)
+        rand_u = np.random.normal(loc=0.0, scale=self.sigma[0], size=count)
+        rand_v = np.random.normal(loc=0.0, scale=self.sigma[1], size=count)
         ray_origins = self.center + rand_u[:, np.newaxis] * u_vec + rand_v[:, np.newaxis] * v_vec
-        ray_directions = np.tile(self.direction, (self.num_particles, 1))
-        particle_energies_eV = self._generate_energy(); particle_currents = self._generate_current()
-        particle_charge_states = self._generate_charge_state()
+        ray_directions = np.tile(self.direction, (count, 1))
+        particle_energies_eV = self._generate_energy(count); particle_currents = self._generate_current(count)
+        particle_charge_states = self._generate_charge_state(count)
         particle_powers = self._generate_power(particle_energies_eV, particle_currents)
         return ray_origins, ray_directions, particle_powers, particle_energies_eV, particle_currents, particle_charge_states
 
@@ -148,21 +159,22 @@ class TwissBeam(ParticleSource):
     def get_visualization_repr(self):
         return self.center, self.main_direction
 
-    def generate(self):
+    def generate(self, num_particles=None):
+        count = self._resolve_particle_count(num_particles)
         u_vec = np.array([0.0, 1.0, 0.0]) if not np.allclose(self.main_direction, [0, 1, 0]) else np.array([1.0, 0.0, 0.0])
         v_vec = np.cross(self.main_direction, u_vec); v_vec /= np.linalg.norm(v_vec)
         u_vec = np.cross(v_vec, self.main_direction)
-        r_x, theta_x = np.sqrt(np.random.uniform(0, 1, self.num_particles)), np.random.uniform(0, 2 * np.pi, self.num_particles)
+        r_x, theta_x = np.sqrt(np.random.uniform(0, 1, count)), np.random.uniform(0, 2 * np.pi, count)
         u1x, u2x = r_x * np.cos(theta_x), r_x * np.sin(theta_x)
-        r_y, theta_y = np.sqrt(np.random.uniform(0, 1, self.num_particles)), np.random.uniform(0, 2 * np.pi, self.num_particles)
+        r_y, theta_y = np.sqrt(np.random.uniform(0, 1, count)), np.random.uniform(0, 2 * np.pi, count)
         u1y, u2y = r_y * np.cos(theta_y), r_y * np.sin(theta_y)
         x_pos = np.sqrt(self.beta_x * self.emit_x) * u1x; x_prime = np.sqrt(self.emit_x / self.beta_x) * (-self.alpha_x * u1x + u2x)
         y_pos = np.sqrt(self.beta_y * self.emit_y) * u1y; y_prime = np.sqrt(self.emit_y / self.beta_y) * (-self.alpha_y * u1y + u2y)
         ray_origins = self.center + x_pos[:, np.newaxis] * u_vec + y_pos[:, np.newaxis] * v_vec
         ray_directions = (self.main_direction + x_prime[:, np.newaxis] * u_vec + y_prime[:, np.newaxis] * v_vec)
         ray_directions /= np.linalg.norm(ray_directions, axis=1)[:, np.newaxis]
-        particle_energies_eV = self._generate_energy(); particle_currents = self._generate_current()
-        particle_charge_states = self._generate_charge_state()
+        particle_energies_eV = self._generate_energy(count); particle_currents = self._generate_current(count)
+        particle_charge_states = self._generate_charge_state(count)
         particle_powers = self._generate_power(particle_energies_eV, particle_currents)
         return ray_origins, ray_directions, particle_powers, particle_energies_eV, particle_currents, particle_charge_states
 
@@ -178,19 +190,20 @@ class GaussianTwissBeam(ParticleSource):
     def get_visualization_repr(self):
         return self.center, self.main_direction
 
-    def generate(self):
+    def generate(self, num_particles=None):
+        count = self._resolve_particle_count(num_particles)
         u_vec = np.array([0.0, 1.0, 0.0]) if not np.allclose(self.main_direction, [0, 1, 0]) else np.array([1.0, 0.0, 0.0])
         v_vec = np.cross(self.main_direction, u_vec); v_vec /= np.linalg.norm(v_vec)
         u_vec = np.cross(v_vec, self.main_direction)
-        u1x, u2x = np.random.normal(0, 1, self.num_particles), np.random.normal(0, 1, self.num_particles)
-        u1y, u2y = np.random.normal(0, 1, self.num_particles), np.random.normal(0, 1, self.num_particles)
+        u1x, u2x = np.random.normal(0, 1, count), np.random.normal(0, 1, count)
+        u1y, u2y = np.random.normal(0, 1, count), np.random.normal(0, 1, count)
         x_pos = np.sqrt(self.beta_x * self.emit_x) * u1x; x_prime = np.sqrt(self.emit_x / self.beta_x) * (-self.alpha_x * u1x + u2x)
         y_pos = np.sqrt(self.beta_y * self.emit_y) * u1y; y_prime = np.sqrt(self.emit_y / self.beta_y) * (-self.alpha_y * u1y + u2y)
         ray_origins = self.center + x_pos[:, np.newaxis] * u_vec + y_pos[:, np.newaxis] * v_vec
         ray_directions = (self.main_direction + x_prime[:, np.newaxis] * u_vec + y_prime[:, np.newaxis] * v_vec)
         ray_directions /= np.linalg.norm(ray_directions, axis=1)[:, np.newaxis]
-        particle_energies_eV = self._generate_energy(); particle_currents = self._generate_current()
-        particle_charge_states = self._generate_charge_state()
+        particle_energies_eV = self._generate_energy(count); particle_currents = self._generate_current(count)
+        particle_charge_states = self._generate_charge_state(count)
         particle_powers = self._generate_power(particle_energies_eV, particle_currents)
         return ray_origins, ray_directions, particle_powers, particle_energies_eV, particle_currents, particle_charge_states
 

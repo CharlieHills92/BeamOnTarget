@@ -159,18 +159,40 @@ def batch_process_directory(input_dir, radius=None, max_cell_area=None):
     # --- Write smoothed_summary.csv ------------------------------------------------
     summary_path = os.path.join(output_dir, "smoothed_summary.csv")
     try:
+        # Collect all species suffixes across all files
+        all_species = []
+        for _, st in file_stats:
+            if st is not None:
+                for sp in sorted(st.get("species", {}).keys()):
+                    if sp not in all_species:
+                        all_species.append(sp)
+
+        header = ["filename", "total_deposited_power_W", "peak_power_density_W_m2"]
+        for sp in all_species:
+            header.append(f"total_deposited_power_W_{sp}")
+            header.append(f"peak_power_density_W_m2_{sp}")
+
         with open(summary_path, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(["filename", "total_deposited_power_W", "peak_power_density_W_m2"])
+            writer.writerow(header)
             for filename, st in file_stats:
                 if st is not None:
-                    writer.writerow([
+                    row = [
                         filename,
                         f"{st['total_power_W']:.4e}",
                         f"{st['peak_density_after']:.4e}",
-                    ])
+                    ]
+                    for sp in all_species:
+                        sp_st = st.get("species", {}).get(sp)
+                        if sp_st:
+                            row.append(f"{sp_st['total_power_W']:.4e}")
+                            row.append(f"{sp_st['peak_density_after']:.4e}")
+                        else:
+                            row.append("N/A")
+                            row.append("N/A")
+                    writer.writerow(row)
                 else:
-                    writer.writerow([filename, "N/A", "N/A"])
+                    writer.writerow([filename] + ["N/A"] * (len(header) - 1))
         print(f"  Summary CSV written to: {summary_path}")
     except Exception as e:
         print(f"  WARNING: Could not write smoothed_summary.csv: {e}")
