@@ -24,6 +24,7 @@ dependencies = [
     "threadpoolctl",
     "matplotlib~=3.10.9",
     "Pillow~=12.2.0",
+    "warp-lang==1.13.0",
 ]
 
 [project.scripts]
