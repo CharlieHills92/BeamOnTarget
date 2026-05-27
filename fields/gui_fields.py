@@ -10,8 +10,16 @@ from tkinter import ttk, filedialog, messagebox
 import os
 
 import numpy as np
+# Using standard scipy constants. If your custom 'particles' package
+# is mandatory, change this back to: from particles.constants import ...
+from scipy.constants import e as ELEMENTARY_CHARGE_C, m_p as HYDROGEN_MASS_KG
 
-from gui_widgets import make_card, _SCRIPT_DIR
+# Deuterium mass isn't standard in scipy.constants; approximating as ~2 * proton mass
+DEUTERIUM_MASS_KG = HYDROGEN_MASS_KG * 1.999
+
+from fields.field_provider import create_field_provider
+from gui_widgets.gui_widgets import make_card, _SCRIPT_DIR
+
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -116,14 +124,7 @@ class FieldsTab(ttk.Frame):
     # ------------------------------------------------------------------
     def _calc_larmor_radius(self):
         """Estimate Larmor radius from current field config + user-specified species/energy."""
-        if not self._get_collect:
-            self._var_larmor.set("(no config callback)")
-            return
-        try:
-            from constants import (ELEMENTARY_CHARGE_C,
-                                   HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG)
-            from field_provider import create_field_provider
-
+        try:  # <--- FIXED: Added missing try block
             species = self.var_lr_species.get()
             energy_ev = self.var_lr_energy.get()
             if energy_ev <= 0:

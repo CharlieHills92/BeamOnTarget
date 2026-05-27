@@ -2,7 +2,7 @@
 
 All tab modules import from here so that styling is consistent.
 """
-import tkinter as tk
+
 from tkinter import ttk
 import os, sys
 
