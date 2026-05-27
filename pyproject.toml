@@ -40,8 +40,9 @@ exclude = [".venv*", "venv*"]
 [tool.setuptools.package-data]
 "*" = [
     "*.json",
+    "config/*.json",
     "BEAM_CONFIGS/*.bl",
-    "CAL/*.stl",
-    "NEU/*.stl",
-    "RID/*.stl",
+    "geometry/3d_models/CAL/*.stl",
+    "geometry/3d_models/NEU/*.stl",
+    "geometry/3d_models/RID/*.stl",
 ]
