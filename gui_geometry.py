@@ -83,7 +83,6 @@ class GeometryTab(ttk.Frame):
                                    values=["X–Y", "X–Z", "Y–Z"],
                                    state="readonly", width=8)
         proj_combo.pack(side="left", padx=(6, 12))
-        proj_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_plot())
 
         ttk.Button(ctrl_frm, text="↻ Refresh Plot", style="Secondary.TButton",
                     command=self._update_plot).pack(side="left")
@@ -125,7 +124,6 @@ class GeometryTab(ttk.Frame):
         if messagebox.askyesno("Remove", f"Remove geometry folder '{folder}'?"):
             self.cfg["GEOMETRY_FOLDERS"].pop(folder, None)
             self._populate_geo_tree()
-            self._update_plot()
 
     def _geo_dialog(self, existing_folder):
         """Pop up a dialog to add/edit a geometry folder entry."""
@@ -220,7 +218,6 @@ class GeometryTab(ttk.Frame):
                 self.cfg["GEOMETRY_FOLDERS"].pop(existing_folder, None)
             self.cfg["GEOMETRY_FOLDERS"][folder_name] = new_s
             self._populate_geo_tree()
-            self._update_plot()
             dlg.destroy()
 
         row += 1
