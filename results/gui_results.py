@@ -703,6 +703,15 @@ class ResultsTab(ttk.Frame):
                                        label=label, color=colours[si], edgecolor="white",
                                        linewidth=0.5)
 
+            for obj, val, patch in zip(all_objects, peaks, peak_bars.patches):
+                self._csv_bar_hover_targets["peak"].append(
+                    {"patch": patch, "value": float(val), "obj": obj, "sim": sim}
+                )
+            for obj, val, patch in zip(all_objects, powers, power_bars.patches):
+                self._csv_bar_hover_targets["power"].append(
+                    {"patch": patch, "value": float(val), "obj": obj, "sim": sim}
+                )
+
         display_labels = []
         for obj in all_objects:
             d = self._chart_comp_vars.get(obj)
