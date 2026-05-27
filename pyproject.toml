@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "BeamOnTarget"
+version = "1.0.0"
+description = "Neutral beam particle deposition simulation and analysis tool"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "numpy>=1.26",
+    "trimesh~=4.12.2",
+    "pyembree>=0.1.12",
+    "embreex>=2.17",
+    "pyvista[all]~=0.48.4",
+    "tqdm~=4.67.3",
+    "pandas~=2.3.0",
+    "scipy~=1.15.3",
+    "fast_simplification",
+    "joblib",
+    "open3d~=0.19.0",
+    "threadpoolctl",
+    "matplotlib~=3.10.9",
+    "Pillow~=12.2.0",
+]
+
+[project.scripts]
+beamontarget = "main:main"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = [".venv*", "venv*"]
+
+[tool.setuptools.package-data]
+"*" = [
+    "*.json",
+    "BEAM_CONFIGS/*.bl",
+    "CAL/*.stl",
+    "NEU/*.stl",
+    "RID/*.stl",
+]
