@@ -190,44 +190,25 @@ def trace_particle_batch_em_only(
         else:
             out_of_bounds = np.zeros(active_idx.size, dtype=bool)
 
-        # Vectorized segment accumulation — one list.append per field per step
-        valid_gidx = active_idx[valid]
-        if valid_gidx.size > 0:
-            seg_pid.append(valid_gidx)
-            seg_sidx.append(np.full(valid_gidx.size, step_idx, dtype=np.int32))
-            seg_spos.append(p[valid].astype(np.float32))
-            seg_epos.append(p_next[valid].astype(np.float32))
-            seg_vel.append(v_next[valid].astype(np.float32))
-            seg_mass.append(m[valid])
-            seg_cs.append(q_state[valid])
-            seg_eev.append(energies_ev[valid_gidx])
-            seg_cur.append(currents_a[valid_gidx])
-            seg_src.append(source_indices[valid_gidx])
-
         # Update state
-        positions[valid_gidx] = p_next[valid]
-        velocities[valid_gidx] = v_next[valid]
-        particle_time[valid_gidx] += dt[valid]
-        # Segment length = |v_next| * dt; equals em_step_length_m only when E=0
-        seg_len_valid = np.sqrt(np.maximum(np.einsum('ij,ij->i', v_next[valid], v_next[valid]), 0.0)) * dt[valid]
-        travel_distance[valid_gidx] += seg_len_valid
-
-        # Deactivate particles that left bounds or did not move
-        live_mask = valid & (~out_of_bounds)
-        active[active_idx[~live_mask]] = False
+        valid_gidx = active_idx[valid]
+        p_end_valid = p_next[valid].copy()
+        dt_effective_valid = dt[valid].copy()
 
         # Apply reactions and check stopping conditions on remaining active
-        still_active_idx = active_idx[live_mask]
+        still_active_idx = active_idx[valid & (~out_of_bounds)]
         if still_active_idx.size > 0:
-            # Reuse dt[live_mask] — Boris conserves speed so dt is unchanged after push
-            dt_live = dt[live_mask]
+            dt_live = dt[valid & (~out_of_bounds)]
+            p_start_live = p[valid & (~out_of_bounds)]
+            v_live = v_next[valid & (~out_of_bounds)]
+
             reaction_species_frame.mass_kg = species.mass_kg[still_active_idx]
             reaction_species_frame.charge_state_e = species.charge_state_e[still_active_idx].copy()
             reaction_started_at = time.perf_counter()
-            reaction_model.apply(
+            collision_dt_s = reaction_model.apply(
                 species_frame=reaction_species_frame,
-                positions_m=positions[still_active_idx],
-                velocities_mps=velocities[still_active_idx],
+                positions_m=p_next[valid & (~out_of_bounds)],
+                velocities_mps=v_live,
                 dt_s=dt_live,
                 rng=rng,
             )
@@ -235,6 +216,49 @@ def trace_particle_batch_em_only(
                 perf_stats["reaction_apply_s"] += time.perf_counter() - reaction_started_at
             species.charge_state_e[still_active_idx] = reaction_species_frame.charge_state_e
 
+            if collision_dt_s is not None and len(collision_dt_s) == still_active_idx.size:
+                cdt = np.asarray(collision_dt_s, dtype=np.float64)
+                collided = np.isfinite(cdt) & (cdt >= 0.0) & (cdt < dt_live)
+                if np.any(collided):
+                    # TODO: implement split-step re-integration for dt_remaining after collision
+                    # using the post-collision charge state; currently the step is truncated at
+                    # the sampled collision point and continuation happens on the next iteration.
+                    cdt = np.minimum(np.maximum(cdt, 0.0), dt_live)
+                    p_collision_live = p_start_live + v_live * cdt[:, np.newaxis]
+                    p_end_live = p_next[valid & (~out_of_bounds)].copy()
+                    p_end_live[collided] = p_collision_live[collided]
+
+                    live_idx_in_valid = np.flatnonzero(~out_of_bounds[valid])
+                    p_end_valid[live_idx_in_valid] = p_end_live
+                    dt_effective_valid[live_idx_in_valid[collided]] = cdt[collided]
+
+        positions[valid_gidx] = p_end_valid
+        velocities[valid_gidx] = v_next[valid]
+        particle_time[valid_gidx] += dt_effective_valid
+        seg_delta_valid = p_end_valid - p[valid]
+        seg_len_valid = np.sqrt(np.maximum(np.einsum('ij,ij->i', seg_delta_valid, seg_delta_valid), 0.0))
+        travel_distance[valid_gidx] += seg_len_valid
+
+        # Vectorized segment accumulation — one list.append per field per step
+        if valid_gidx.size > 0:
+            seg_pid.append(valid_gidx)
+            seg_sidx.append(np.full(valid_gidx.size, step_idx, dtype=np.int32))
+            seg_spos.append(p[valid].astype(np.float32))
+            seg_epos.append(p_end_valid.astype(np.float32))
+            seg_vel.append(v_next[valid].astype(np.float32))
+            seg_mass.append(m[valid])
+            seg_cs.append(q_state[valid])
+            seg_eev.append(energies_ev[valid_gidx])
+            seg_cur.append(currents_a[valid_gidx])
+            seg_src.append(source_indices[valid_gidx])
+
+        # Deactivate particles that left bounds or did not move
+        live_mask = valid & (~out_of_bounds)
+        active[active_idx[~live_mask]] = False
+
+        # Apply stop criteria after this step's distance/velocity updates.
+        still_active_idx = active_idx[live_mask]
+        if still_active_idx.size > 0:
             if em_max_distance_m is not None:
                 active[still_active_idx[travel_distance[still_active_idx] >= em_max_distance_m]] = False
 

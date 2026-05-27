@@ -11,7 +11,12 @@ class ReactionModel:
     """Base reaction interface."""
 
     def apply(self, species_frame, positions_m, velocities_mps, dt_s, rng):
-        """Apply reactions in-place to species properties."""
+        """Apply reactions in-place to species properties.
+
+        Returns:
+            collision_dt_s: Array (N,) with sampled collision time in seconds for
+                particles that reacted during this step; np.inf otherwise.
+        """
         raise NotImplementedError
 
 
@@ -19,7 +24,8 @@ class NullReactionModel(ReactionModel):
     """No species transformations."""
 
     def apply(self, species_frame, positions_m, velocities_mps, dt_s, rng):
-        return
+        n = len(species_frame.charge_state_e)
+        return np.full(n, np.inf, dtype=np.float64)
 
 
 class BeamCrossSectionReaction(ReactionModel):
@@ -172,15 +178,25 @@ class BeamCrossSectionReaction(ReactionModel):
 
     def apply(self, species_frame, positions_m, velocities_mps, dt_s, rng):
         if self.background_density_m3 <= 0.0 and self.density_profile_positions_m is None:
-            return
+            n0 = len(species_frame.charge_state_e)
+            return np.full(n0, np.inf, dtype=np.float64)
 
         n = len(species_frame.charge_state_e)
         if n == 0:
-            return
+            return np.empty(0, dtype=np.float64)
 
         speed = np.sqrt(np.maximum(np.einsum('ij,ij->i', velocities_mps, velocities_mps), 0.0))
         if not np.any(speed > 0.0):
-            return
+            return np.full(n, np.inf, dtype=np.float64)
+
+        dt = np.asarray(dt_s, dtype=np.float64)
+        if dt.ndim == 0:
+            dt = np.full(n, float(dt), dtype=np.float64)
+        else:
+            dt = np.asarray(dt, dtype=np.float64)
+            if dt.shape != (n,):
+                dt = np.broadcast_to(dt, (n,)).astype(np.float64, copy=False)
+        dt = np.maximum(dt, 0.0)
 
         mass = np.asarray(species_frame.mass_kg, dtype=np.float64)
         energy_ev = 0.5 * mass * speed * speed / ELEMENTARY_CHARGE_C
@@ -194,10 +210,9 @@ class BeamCrossSectionReaction(ReactionModel):
         if self.manual_cross_sections:
             # Use user-supplied constant cross-sections (scalar values in m²)
             sigmas = self.manual_cross_sections
-            probs = {}
+            rates = {}
             for k, sigma in sigmas.items():
-                rate = np.asarray(sigma, dtype=np.float64) * speed * density_m3
-                probs[k] = 1.0 - np.exp(-rate * np.asarray(dt_s, dtype=np.float64))
+                rates[k] = np.asarray(sigma, dtype=np.float64) * speed * density_m3
         elif self.fixed_cs:
             # Compute cross-sections once at mean initial energy (scalar), reuse on subsequent calls.
             # Using mean energy produces scalar sigmas that broadcast with any batch size.
@@ -207,66 +222,84 @@ class BeamCrossSectionReaction(ReactionModel):
                     energy_ev=mean_energy, isotope=isotope,
                 )
             sigmas = self._cached_sigmas
-            # Compute probabilities from cached sigmas: rate = sigma * speed * density
-            probs = {}
+            # Compute rates from cached sigmas: rate = sigma * speed * density
+            rates = {}
             for k, sigma in sigmas.items():
-                rate = np.asarray(sigma, dtype=np.float64) * speed * density_m3
-                probs[k] = 1.0 - np.exp(-rate * np.asarray(dt_s, dtype=np.float64))
+                rates[k] = np.asarray(sigma, dtype=np.float64) * speed * density_m3
         else:
-            probs = cross_sections.channel_probabilities(
+            rates = cross_sections.channel_rates_s(
                 energy_ev=energy_ev,
                 speed_mps=speed,
-                dt_s=dt_s,
                 background_density_m3=density_m3,
                 isotope=isotope,
             )
 
         charge = species_frame.charge_state_e
         initial_charge = charge.copy()
+        collision_dt_s = np.full(n, np.inf, dtype=np.float64)
 
-        # One null-collision draw per particle for this step.
-        u_all = rng.random(n)
-
-        p_single_all = np.clip(
-            np.asarray(probs[cross_sections.CH_SINGLE_STRIP], dtype=np.float64), 0.0, 1.0
+        rate_single_all = np.maximum(
+            np.asarray(rates[cross_sections.CH_SINGLE_STRIP], dtype=np.float64), 0.0
         )
-        p_double_all = np.clip(
-            np.asarray(probs[cross_sections.CH_DOUBLE_STRIP], dtype=np.float64), 0.0, 1.0
+        rate_double_all = np.maximum(
+            np.asarray(rates[cross_sections.CH_DOUBLE_STRIP], dtype=np.float64), 0.0
         )
-        p_strip_all = np.clip(
-            np.asarray(probs[cross_sections.CH_NEUTRAL_STRIP], dtype=np.float64), 0.0, 1.0
+        rate_strip_all = np.maximum(
+            np.asarray(rates[cross_sections.CH_NEUTRAL_STRIP], dtype=np.float64), 0.0
         )
-        p_cx_all = np.clip(
-            np.asarray(probs[cross_sections.CH_CHARGE_EXCHANGE], dtype=np.float64), 0.0, 1.0
+        rate_cx_all = np.maximum(
+            np.asarray(rates[cross_sections.CH_CHARGE_EXCHANGE], dtype=np.float64), 0.0
         )
 
-        # H-/D-: competing single and double stripping channels with null collision.
+        # Sample event time t = -ln(1-u) / rate_total for each charge family.
+        u_time = rng.random(n)
+        u_time = np.clip(u_time, 0.0, 1.0 - np.finfo(np.float64).eps)
+
+        # H-/D-: competing single and double stripping channels.
         neg_mask = initial_charge == -1
-        p_double_all = np.minimum(p_double_all, 1.0 - p_single_all)
-        p_tot_neg = p_single_all + p_double_all
-        reacted_neg = neg_mask & (u_all < p_tot_neg)
-        # apply null collision and channel selection for reacted particles
+        rate_tot_neg = rate_single_all + rate_double_all
+        t_neg = np.where(
+            rate_tot_neg > 0.0,
+            -np.log1p(-u_time) / np.maximum(rate_tot_neg, 1e-300),
+            np.inf,
+        )
+        reacted_neg = neg_mask & (t_neg < dt)
+        collision_dt_s[reacted_neg] = t_neg[reacted_neg]
+
+        # Channel selection conditioned on an actual reaction in this step.
         reacted_neg_idx = np.flatnonzero(reacted_neg)
         if reacted_neg_idx.size > 0:
             u2 = rng.random(reacted_neg_idx.size)
-            p_tot_sub = p_tot_neg[reacted_neg_idx]
             sub_to_single = u2 < np.where(
-                p_tot_sub > 0.0,
-                p_single_all[reacted_neg_idx] / p_tot_sub,
+                rate_tot_neg[reacted_neg_idx] > 0.0,
+                rate_single_all[reacted_neg_idx] / rate_tot_neg[reacted_neg_idx],
                 0.5,
             )
             charge[reacted_neg_idx[sub_to_single]] = 0
             charge[reacted_neg_idx[~sub_to_single]] = 1
 
-        # H0/D0: stripping to positive ion with null collision.
+        # H0/D0: stripping to positive ion.
         neu_mask = initial_charge == 0
-        to_pos_from_neu = neu_mask & (u_all < p_strip_all)
+        t_neu = np.where(
+            rate_strip_all > 0.0,
+            -np.log1p(-u_time) / np.maximum(rate_strip_all, 1e-300),
+            np.inf,
+        )
+        to_pos_from_neu = neu_mask & (t_neu < dt)
+        collision_dt_s[to_pos_from_neu] = t_neu[to_pos_from_neu]
         charge[to_pos_from_neu] = 1
 
-        # H+/D+: charge exchange to neutral with null collision.
+        # H+/D+: charge exchange to neutral.
         pos_mask = initial_charge == 1
-        to_neu_from_pos = pos_mask & (u_all < p_cx_all)
+        t_pos = np.where(
+            rate_cx_all > 0.0,
+            -np.log1p(-u_time) / np.maximum(rate_cx_all, 1e-300),
+            np.inf,
+        )
+        to_neu_from_pos = pos_mask & (t_pos < dt)
+        collision_dt_s[to_neu_from_pos] = t_pos[to_neu_from_pos]
         charge[to_neu_from_pos] = 0
+        return collision_dt_s
 
 
 def create_reaction_model(config_dict=None):
