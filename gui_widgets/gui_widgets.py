@@ -10,8 +10,18 @@ import os, sys
 #  Path helpers
 # ---------------------------------------------------------------------------
 _IS_FROZEN = getattr(sys, 'frozen', False)
-_SCRIPT_DIR = (os.path.dirname(sys.executable) if _IS_FROZEN
-               else os.path.dirname(os.path.abspath(__file__)))
+
+# Find the directory of THIS file (Warptest/gui_widgets)
+_CURRENT_DIR = (os.path.dirname(sys.executable) if _IS_FROZEN
+                else os.path.dirname(os.path.abspath(__file__)))
+
+# FIXED: Step up one level to get the true Warptest project root!
+_SCRIPT_DIR = os.path.dirname(_CURRENT_DIR) if not _IS_FROZEN else _CURRENT_DIR
+
+
+def resolve_path(relative_path):
+    """Resolve a simulation-file path relative to the main application folder."""
+    return os.path.join(_SCRIPT_DIR, relative_path)
 
 
 def resolve_path(relative_path):

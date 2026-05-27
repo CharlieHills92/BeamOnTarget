@@ -4,10 +4,11 @@ import os
 
 import numpy as np
 
-import cross_sections
-from constants import ELEMENTARY_CHARGE_C
-from field_provider import create_field_provider
-from reactions import create_reaction_model
+import particles.cross_sections as cross_sections
+from particles.constants import ELEMENTARY_CHARGE_C
+from fields.field_provider import create_field_provider
+from reactions.reactions import create_reaction_model
+
 
 
 def _estimate_em_larmor_radius(particle_sources_list, external_field_cfg, reaction_model_cfg):

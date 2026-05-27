@@ -19,7 +19,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-from gui_widgets import make_card, resolve_path
+from gui_widgets.gui_widgets import make_card, resolve_path
 
 # ---------------------------------------------------------------------------
 #  ResultsTab
@@ -702,15 +702,6 @@ class ResultsTab(ttk.Frame):
             power_bars = ax_power.bar(x + offset, powers, bar_width * 0.9,
                                        label=label, color=colours[si], edgecolor="white",
                                        linewidth=0.5)
-
-            for obj, val, patch in zip(all_objects, peaks, peak_bars.patches):
-                self._csv_bar_hover_targets["peak"].append(
-                    {"patch": patch, "value": float(val), "obj": obj, "sim": sim}
-                )
-            for obj, val, patch in zip(all_objects, powers, power_bars.patches):
-                self._csv_bar_hover_targets["power"].append(
-                    {"patch": patch, "value": float(val), "obj": obj, "sim": sim}
-                )
 
         display_labels = []
         for obj in all_objects:

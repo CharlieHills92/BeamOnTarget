@@ -219,7 +219,7 @@ def load_beamlets_from_file(filename, num_particles_per_beamlet, beamlet_area):
         print(f"Error: Particle source file not found at '{filename}'"); return []
     except Exception as e:
         print(f"Error reading particle source file '{filename}': {e}"); return []
-        
+
     all_sources = []
     print(f"\nLoading {len(df)} beamlet definitions from '{filename}'...")
 

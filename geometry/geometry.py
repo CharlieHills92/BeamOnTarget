@@ -4,7 +4,6 @@ Handles loading, scaling, and refining of mesh geometry from folder-based defini
 Includes a caching system to store refined meshes for faster startup.
 """
 import trimesh
-import numpy as np
 import os
 import glob
 from tqdm import tqdm

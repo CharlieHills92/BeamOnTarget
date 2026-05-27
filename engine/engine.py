@@ -11,10 +11,11 @@ import math
 import time
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from field_provider import create_field_provider
-from reactions import create_reaction_model
-from em_tracker_v2 import trace_particle_batch_em_only
-from trajectory_intersector import intersect_trajectory_segments_bvh
+from fields.field_provider import create_field_provider
+from reactions.reactions import create_reaction_model
+from particles.em_tracker_v2 import trace_particle_batch_em_only
+from particles.trajectory_intersector import intersect_trajectory_segments_bvh
+
 
 def _empty_particle_batch():
     return {
@@ -129,7 +130,7 @@ def _process_particle_batch_ray(particle_batch, intersector, face_offsets, face_
     if max_impact_records is None:
         max_impact_records = [None] * num_objects
     impact_records = [{'hit_count': 0, 'data': []} for _ in range(num_objects)]
-    
+
     if particle_batch["origins"].size == 0:
         return sparse_updates, impact_records  # No particles; no updates
 
@@ -168,7 +169,7 @@ def _process_particle_batch_ray(particle_batch, intersector, face_offsets, face_
             locations = np.empty((0, 3), dtype=np.float64)
             index_ray = np.empty(0, dtype=np.intp)
             index_tri_global = np.empty(0, dtype=np.intp)
-    
+
     if len(locations) > 0:
         colliding_particle_power = particle_powers[index_ray]
         colliding_particle_energy_eV = particle_energies_eV[index_ray]
@@ -246,7 +247,7 @@ def run_simulation_single_hit(scene_mesh, face_offsets, face_counts, particle_so
     print(f"\nInitializing FAST, Memory-Safe Parallel simulation engine...")
     print(f"  - Using {n_jobs} threads (available cores: {available_cores}).")
     print(f"  - Target particle batch size: {int(particle_batch_size)}")
-    
+
     intersector = trimesh.ray.ray_pyembree.RayMeshIntersector(scene_mesh)
 
     # Count total batches for progress bar without materializing them all in memory
@@ -279,30 +280,31 @@ def run_simulation_single_hit(scene_mesh, face_offsets, face_counts, particle_so
     for obj_idx in range(num_objects):
         if save_impact_flags[obj_idx] and impact_data[obj_idx]['total_hits'] > 0:
             d = impact_data[obj_idx]
-            print(f"  Impact data for object {obj_idx}: {d['stored_hits']} records stored out of {d['total_hits']} total hits.")
-    
+            print(
+                f"  Impact data for object {obj_idx}: {d['stored_hits']} records stored out of {d['total_hits']} total hits.")
+
     return final_deposited_power, impact_data
 
 
 def run_simulation_em_track_then_bvh(
-    scene_mesh,
-    face_offsets,
-    face_counts,
-    particle_sources_list,
-    deposition_model,
-    particle_batch_size,
-    num_cpu_cores,
-    em_step_length_m,
-    em_max_steps,
-    em_max_distance_m=None,
-    em_min_energy_ev=None,
-    external_field_cfg=None,
-    reaction_model_cfg=None,
-    bounding_box_min_corner_m=None,
-    bounding_box_max_corner_m=None,
-    save_impact_flags=None,
-    max_impact_records=None,
-    em_bvh_checkpoint_distance_m=None,
+        scene_mesh,
+        face_offsets,
+        face_counts,
+        particle_sources_list,
+        deposition_model,
+        particle_batch_size,
+        num_cpu_cores,
+        em_step_length_m,
+        em_max_steps,
+        em_max_distance_m=None,
+        em_min_energy_ev=None,
+        external_field_cfg=None,
+        reaction_model_cfg=None,
+        bounding_box_min_corner_m=None,
+        bounding_box_max_corner_m=None,
+        save_impact_flags=None,
+        max_impact_records=None,
+        em_bvh_checkpoint_distance_m=None,
 ):
     """
     Two-phase EM particle tracking:
@@ -530,14 +532,15 @@ def run_simulation_em_track_then_bvh(
             sp_total = sum(arr.sum() for arr in per_species_power[cs])
             label = {-1: "H-", 0: "H0", 1: "H+"}.get(cs, f"q={cs}")
             if total_deposited > 0:
-                print(f"  Species {label}: {sp_total:.2f} W ({100*sp_total/total_deposited:.1f}%)")
+                print(f"  Species {label}: {sp_total:.2f} W ({100 * sp_total / total_deposited:.1f}%)")
             else:
                 print(f"  Species {label}: {sp_total:.2f} W")
 
     for obj_idx in range(num_objects):
         if save_impact_flags[obj_idx] and impact_data[obj_idx]['total_hits'] > 0:
             d = impact_data[obj_idx]
-            print(f"  Impact data for object {obj_idx}: {d['stored_hits']} records stored out of {d['total_hits']} total hits.")
+            print(
+                f"  Impact data for object {obj_idx}: {d['stored_hits']} records stored out of {d['total_hits']} total hits.")
 
     if perf_enabled:
         total_traced = (perf_totals['em_pure_s'] + perf_totals['reaction_apply_s']
@@ -550,6 +553,3 @@ def run_simulation_em_track_then_bvh(
         print(f"  - Total traced: {total_traced:.2f} s")
 
     return final_deposited_power, impact_data, per_species_power
-
-
-

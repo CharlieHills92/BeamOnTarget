@@ -15,7 +15,7 @@ over the cell itself and all its neighbours within the radius.  This approach
 is physically consistent: it preserves the total deposited power and computes
 a meaningful averaged power density.
 """
-import pyvista as pv
+
 import numpy as np
 from scipy.spatial import cKDTree
 import os

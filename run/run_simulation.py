@@ -15,14 +15,17 @@ import trimesh
 import numpy as np
 import os
 import glob
-import config
-import geometry
-import particles
-import engine
-import output
-from prerun_analysis import run_em_prerun_analysis
-import batch_smoother # <-- NEW: Import the batch smoother script
-import generate_report
+
+# --- Project packages ---
+from config import config
+from geometry import geometry
+from particles import particles
+from engine import engine
+import engine.engine_warp as engine_warp
+from output import output
+from prerun_analysis.prerun_analysis import run_em_prerun_analysis
+import smoothing.batch_smoother as batch_smoother
+import report.generate_report as generate_report
 
 
 def _resolve_config_relative_paths(config_path):
@@ -113,6 +116,26 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
             max_impact_records=max_impact_records_per_mesh,
         )
         per_species_power = {}  # not available in ray mode
+
+    elif tracking_mode == "ray_cuda":
+
+        # 2. Run the simulation using the precise signature expected by engine_warp
+        deposited_power, impact_data = engine_warp.run_simulation_single_hit_warp(
+            scene_mesh=scene_mesh,
+            face_offsets=face_offsets,
+            face_counts=face_counts,
+            particle_sources_list=particle_sources_list,
+            deposition_model=config.get_deposition_fraction,
+            particle_batch_size=config.PARTICLE_BATCH_SIZE,
+            num_cpu_cores=config.NUM_CPU_CORES,  # Kept for compatibility, ignored by Warp
+            save_impact_flags=save_impact_flags_per_mesh,
+            max_impact_records=max_impact_records_per_mesh,
+            device="cuda"  # Set to "cpu" here if you ever need to debug without a GPU
+        )
+
+        # 3. Raycasting mode doesn't track species; assign empty fallback dict
+        per_species_power = {}
+
     elif tracking_mode == "em_track_then_bvh":
         reaction_model_cfg = dict(config.REACTION_MODEL or {})
         reaction_model_cfg.setdefault(

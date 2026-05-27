@@ -2,7 +2,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-from gui_widgets import make_card, browse_directory
+from gui_widgets.gui_widgets import make_card, browse_directory
 
 
 class OutputTab(ttk.Frame):

@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass
 import numpy as np
-from constants import ELEMENTARY_CHARGE_C
+from particles.constants import ELEMENTARY_CHARGE_C
+
 
 
 @dataclass

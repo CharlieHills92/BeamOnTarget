@@ -6,8 +6,8 @@ Outputs trajectory segments for deferred BVH checking in Phase 2.
 import time
 
 import numpy as np
-from constants import ELEMENTARY_CHARGE_C
-from species import SpeciesFrame, build_species_frame
+from particles.constants import ELEMENTARY_CHARGE_C
+from particles.species import SpeciesFrame, build_species_frame
 
 
 SEGMENT_DTYPE = [

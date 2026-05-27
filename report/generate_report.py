@@ -37,33 +37,18 @@ import csv
 import glob
 import argparse
 
+# --- FIXED IMPORT BLOCK ---
 try:
-    import config
+    from config import config
     DEFAULT_OUTPUT_DIR = config.DETAILED_OUTPUT_DIR
-except ImportError:
+except (ImportError, AttributeError):
     DEFAULT_OUTPUT_DIR = "OUTPUT"
 
 DEFAULT_REPORT_FILENAME = "summary_report.csv"
 
 
 def generate_summary_csv(input_dir, output_filename=None):
-    """
-    Reads all .vtp/.vtm files in *input_dir*, extracts total deposited power
-    and peak power density from each, and writes a summary CSV.
 
-    Parameters
-    ----------
-    input_dir : str
-        Directory containing .vtp/.vtm result files.
-    output_filename : str, optional
-        Name of the CSV file to write.  Defaults to 'summary_report.csv'.
-        The file is saved inside *input_dir*.
-
-    Returns
-    -------
-    summary_path : str or None
-        Path to the written CSV, or None if no files were found.
-    """
     if output_filename is None:
         output_filename = DEFAULT_REPORT_FILENAME
 

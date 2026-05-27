@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
-# sim_gui.py
-"""
-Tkinter GUI for managing the BeamOnTarget simulation.
+# main.py
 
-Reads / writes config.json through the config module.
-Launches run_simulation.py as a subprocess (preserving CLI compatibility).
-Launches ParaView externally for geometry and results viewing.
-"""
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os
@@ -16,20 +10,20 @@ import glob
 import threading
 
 import matplotlib
-matplotlib.use("Agg")  # non-interactive backend; sub-tabs import their own
+matplotlib.use("Agg")
 from PIL import Image, ImageTk
 
-import viewer  # built-in Open3D viewer
-from config import load_config, save_config
-from gui_widgets import make_card, parse_vec3, resolve_path as _resolve_path
-from gui_fields import FieldsTab
-from gui_reactions import ReactionsTab
-from gui_results import ResultsTab
-from gui_geometry import GeometryTab
-from gui_particles import ParticlesTab
-from gui_output import OutputTab
-from gui_run import RunTab
-
+# --- Project packages ---
+import viewer.viewer as viewer
+from config.config import load_config, save_config
+from gui_widgets.gui_widgets import make_card, parse_vec3, resolve_path as _resolve_path
+from fields.gui_fields import FieldsTab
+from reactions.gui_reactions import ReactionsTab
+from results.gui_results import ResultsTab
+from geometry.gui_geometry import GeometryTab
+from particles.gui_particles import ParticlesTab
+from output.gui_output import OutputTab
+from run.gui_run import RunTab
 # ---------------------------------------------------------------------------
 # Resolve paths  (canonical copies live in gui_widgets; keep local for
 # the handful of module-level constants that still need _SCRIPT_DIR).
@@ -37,12 +31,12 @@ from gui_run import RunTab
 _IS_FROZEN = getattr(sys, 'frozen', False)  # True when running from PyInstaller exe
 _SCRIPT_DIR = (os.path.dirname(sys.executable) if _IS_FROZEN
                else os.path.dirname(os.path.abspath(__file__)))
-_CONFIG_JSON = os.path.join(_SCRIPT_DIR, "config.json")
-_RUN_SIMULATION = os.path.join(_SCRIPT_DIR, "run_simulation.py")
-_RUN_SMOOTHING = os.path.join(_SCRIPT_DIR, "smooth_results.py")
-_PYTHON = sys.executable  # the same Python that launched the GUI
-_SPLASH_LOGO = os.path.join(_SCRIPT_DIR, "BOT_logo.png")
-_APP_ICON_BMP = os.path.join(_SCRIPT_DIR, "BOT_icon.bmp")
+_CONFIG_JSON    = os.path.join(_SCRIPT_DIR, "config", "config.json")
+_RUN_SIMULATION = os.path.join(_SCRIPT_DIR, "run", "run_simulation.py")
+_RUN_SMOOTHING  = os.path.join(_SCRIPT_DIR, "run", "smooth_results.py")
+_PYTHON         = sys.executable  
+_SPLASH_LOGO    = os.path.join(_SCRIPT_DIR, "BOT_logo.png")
+_APP_ICON_BMP   = os.path.join(_SCRIPT_DIR, "BOT_icon.bmp")
 
 
 # ===================================================================
@@ -463,13 +457,23 @@ class SimGUI(tk.Tk):
         row = 0
         ttk.Label(method_card, text="Method:", style="Card.TLabel").grid(
             row=row, column=0, sticky="w", pady=5)
-        raw_mode = self.cfg.get("TRACKING_MODE", "ray")
-        initial_mode = "EM Tracing" if raw_mode == "em_track_then_bvh" else "Ray Tracing"
+
+        # --- 1. Map config key to UI string ---
+        raw_mode = str(self.cfg.get("TRACKING_MODE", "ray")).strip().lower()
+        if raw_mode == "em_track_then_bvh":
+            initial_mode = "EM Tracing"
+        elif raw_mode == "ray_cuda":
+            initial_mode = "Ray Tracing (GPU/CUDA)"
+        else:
+            initial_mode = "Ray Tracing"
+
         self.var_tracking_mode = tk.StringVar(value=initial_mode)
         mode_frame = ttk.Frame(method_card, style="Card.TFrame")
+
+        # --- 2. Add the new method to the values tuple ---
         mode_combo = ttk.Combobox(mode_frame, textvariable=self.var_tracking_mode,
-                                   values=["Ray Tracing", "EM Tracing"],
-                                   state="readonly", width=20)
+                                  values=["Ray Tracing", "Ray Tracing (GPU/CUDA)", "EM Tracing"],
+                                  state="readonly", width=24)
         mode_combo.pack(side="left")
 
         rm = self.cfg.get("REACTION_MODEL", {})
@@ -787,9 +791,25 @@ class SimGUI(tk.Tk):
 
     def _collect(self):
         d = dict(self.cfg)  # start from current (preserves unknown keys)
-        # Tracking method
-        is_em = self.var_tracking_mode.get() == "EM Tracing"
-        d["TRACKING_MODE"] = "em_track_then_bvh" if is_em else "ray"
+
+        # --- Tracking method translation ---
+        tracking_string = self.var_tracking_mode.get()
+        if tracking_string == "EM Tracing":
+            d["TRACKING_MODE"] = "em_track_then_bvh"
+            is_em = True
+        elif tracking_string == "Ray Tracing (GPU/CUDA)":
+            d["TRACKING_MODE"] = "ray_cuda"
+            is_em = False
+
+            # Safety Guard: Automatically throttle batch size for VRAM protection
+            # If the current config batch size is over 500k, cap it to prevent GPU OOM crashes.
+            current_batch = d.get("PARTICLE_BATCH_SIZE", 2500000)
+            if current_batch > 500000:
+                d["PARTICLE_BATCH_SIZE"] = 500000
+        else:
+            d["TRACKING_MODE"] = "ray"
+            is_em = False
+
         # EM settings
         d["EM_STEP_LENGTH_M"] = self.var_em_step.get()
         d["EM_MAX_STEPS"] = self.var_em_max_steps.get()
@@ -798,18 +818,23 @@ class SimGUI(tk.Tk):
         d["EM_BVH_CHECKPOINT_DISTANCE_M"] = self.var_em_checkpoint.get()
         d["EM_BOUNDING_BOX_MIN_CORNER_M"] = self._parse_vec3(self.var_bbox_min.get())
         d["EM_BOUNDING_BOX_MAX_CORNER_M"] = self._parse_vec3(self.var_bbox_max.get())
+
         # External field — delegate to FieldsTab
         self._fields_tab.collect(d)
+
         # Reaction model — delegate to ReactionsTab
         self._reactions_tab.collect(d, is_em and self.var_reactions_enabled.get())
+
         d["NUM_CPU_CORES"] = self.var_cpu.get()
         d["GEOMETRY_CACHE_DIR"] = self.var_cache.get()
         d["PARAVIEW_PATH"] = self.var_pv_path.get()
         d["PARAVIEW_MODULE"] = self.var_pv_module.get()
+
         # Geometry / Particles / Output — delegated
         self._geometry_tab.collect(d)
         self._particles_tab.collect(d)
         self._output_tab.collect(d)
+
         d["ENABLE_VISUALIZATION"] = self._results_tab.var_ENABLE_VISUALIZATION.get()
         return d
 
@@ -1193,6 +1218,19 @@ class _PickDialog(tk.Toplevel):
 #  Entry point
 # ===================================================================
 def main():
+    import sys
+
+    # Force Windows 11 to use native monitor scaling
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
     app = SimGUI()
     app.mainloop()
 
