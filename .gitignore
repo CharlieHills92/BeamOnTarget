@@ -25,4 +25,6 @@
 *.dens
 *.json
 *.fld
-venv/
+/.venv/
+/BeamOnTarget.egg-info/
+/.pv_temp_script.py
