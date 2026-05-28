@@ -4,7 +4,7 @@ import glob
 import tkinter as tk
 from tkinter import ttk
 
-from gui_widgets import (make_card, _SCRIPT_DIR,
+from gui_widgets.gui_widgets import (make_card, _SCRIPT_DIR,
                          resolve_path as _resolve_path, browse_directory)
 
 
