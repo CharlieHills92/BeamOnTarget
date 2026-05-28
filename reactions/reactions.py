@@ -43,6 +43,7 @@ class BeamCrossSectionReaction(ReactionModel):
         self,
         background_density_m3=0.0,
         density_profile_file=None,
+        density_profile_scale=1.0,
         density_profile_direction=(1.0, 0.0, 0.0),
         fixed_cs=False,
         manual_cross_sections=None,
@@ -50,6 +51,9 @@ class BeamCrossSectionReaction(ReactionModel):
     ):
         self.background_density_m3 = float(background_density_m3)
         self.density_profile_file = density_profile_file
+        self.density_profile_scale = float(density_profile_scale)
+        if not np.isfinite(self.density_profile_scale) or self.density_profile_scale < 0.0:
+            raise ValueError("density_profile_scale must be finite and >= 0")
         self.density_profile_file_resolved = None
         self.density_profile_positions_m = None
         self.density_profile_values_m3 = None
@@ -135,13 +139,13 @@ class BeamCrossSectionReaction(ReactionModel):
             )
 
         self.density_profile_positions_m = uniq_pos
-        self.density_profile_values_m3 = uniq_den
+        self.density_profile_values_m3 = uniq_den * self.density_profile_scale
 
         # Build the interpolator once (reused by every _density_at_positions call)
         self._density_interp = interp1d(
-            uniq_pos, uniq_den,
+            uniq_pos, self.density_profile_values_m3,
             kind='linear',
-            fill_value=(uniq_den[0], uniq_den[-1]),
+            fill_value=(self.density_profile_values_m3[0], self.density_profile_values_m3[-1]),
             bounds_error=False,
         )
 
@@ -165,6 +169,7 @@ class BeamCrossSectionReaction(ReactionModel):
             f"'{self.density_profile_file_resolved}' with {points} points, "
             f"s-range=[{s_min:.6e}, {s_max:.6e}] m, "
             f"n-range=[{n_min:.6e}, {n_max:.6e}] m^-3, "
+            f"scale={self.density_profile_scale:.6g}, "
             f"direction={direction_str}."
         )
 
@@ -326,6 +331,7 @@ def create_reaction_model(config_dict=None):
         return BeamCrossSectionReaction(
             background_density_m3=cfg.get("background_density_m3", 0.0),
             density_profile_file=cfg.get("density_profile_file", None),
+            density_profile_scale=cfg.get("density_profile_scale", 1.0),
             density_profile_direction=density_direction,
             fixed_cs=cfg.get("fixed_cs", False),
             manual_cross_sections=cfg.get("manual_cross_sections", None),

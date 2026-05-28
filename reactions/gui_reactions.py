@@ -98,6 +98,17 @@ class ReactionsTab(ttk.Frame):
                     command=self._browse_density_file).pack(side="left")
 
         row += 1
+        dens_scale_frame = ttk.Frame(dens_card, style="Card.TFrame")
+        dens_scale_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=2)
+        ttk.Label(dens_scale_frame, text="Profile multiplier:",
+                  style="Card.TLabel").pack(side="left")
+        self.var_density_profile_scale = tk.DoubleVar(
+            value=rm.get("density_profile_scale", 1.0)
+        )
+        ttk.Entry(dens_scale_frame, textvariable=self.var_density_profile_scale,
+                  width=12).pack(side="left", padx=(8, 0))
+
+        row += 1
         dens_dir_frame = ttk.Frame(dens_card, style="Card.TFrame")
         dens_dir_frame.grid(row=row, column=0, columnspan=3, sticky="we", pady=2)
         ttk.Label(dens_dir_frame, text="Profile direction:",
@@ -258,6 +269,7 @@ class ReactionsTab(ttk.Frame):
                 "type": "beam_gas_cross_sections",
                 "background_density_m3": self.var_bg_density.get(),
                 "density_profile_file": self.var_density_file.get(),
+                "density_profile_scale": self.var_density_profile_scale.get(),
                 "density_profile_direction": dd_vec,
             }
             if self.var_cs_mode.get() == "Manual (m²)":
@@ -279,6 +291,7 @@ class ReactionsTab(ttk.Frame):
         rm = c.get("REACTION_MODEL", {})
         self.var_bg_density.set(rm.get("background_density_m3", 0.0))
         self.var_density_file.set(rm.get("density_profile_file", ""))
+        self.var_density_profile_scale.set(rm.get("density_profile_scale", 1.0))
         dd = rm.get("density_profile_direction",
                      c.get("DENSITY_DIRECTION", [1.0, 0.0, 0.0]))
         self.var_density_dir.set(f"{dd[0]}, {dd[1]}, {dd[2]}")
@@ -417,6 +430,7 @@ class ReactionsTab(ttk.Frame):
         model = BeamCrossSectionReaction(
             background_density_m3=bg_density,
             density_profile_file=density_file,
+            density_profile_scale=self.var_density_profile_scale.get(),
             density_profile_direction=density_dir,
             verbose=False,
         )
@@ -458,6 +472,7 @@ class ReactionsTab(ttk.Frame):
         model = BeamCrossSectionReaction(
             background_density_m3=bg_density,
             density_profile_file=density_file,
+            density_profile_scale=self.var_density_profile_scale.get(),
             density_profile_direction=density_dir,
             verbose=False,
         )
@@ -604,6 +619,7 @@ class ReactionsTab(ttk.Frame):
             model = BeamCrossSectionReaction(
                 background_density_m3=bg_density,
                 density_profile_file=density_file,
+                density_profile_scale=self.var_density_profile_scale.get(),
                 density_profile_direction=density_dir,
                 verbose=False,
             )
