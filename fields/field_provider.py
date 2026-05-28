@@ -2,7 +2,7 @@
 
 import os
 import numpy as np
-from scipy.interpolate import RegularGridInterpolator
+from scipy.interpolate import RegularGridInterpolator, interp1d
 
 
 class ExternalFieldProvider:
@@ -34,9 +34,10 @@ class GridFieldComponent:
     """
 
     def __init__(self, filepath):
+        # In both GridFieldComponent.__init__ and LineFieldComponent.__init__:
         resolved = filepath
         if not os.path.isabs(filepath):
-            resolved = os.path.join(os.path.dirname(__file__), filepath)
+            resolved = os.path.join(os.getcwd(), filepath)  # was: os.path.dirname(__file__)
         # Skip header rows that cannot be parsed as floats
         skip = 0
         with open(resolved, 'r') as fh:
@@ -78,7 +79,7 @@ class GridFieldComponent:
             (xs, ys, zs), values,
             method='linear',
             bounds_error=False,
-            fill_value=0.0,  # extrapolate to zero outside the grid 
+            fill_value=0.0,  # extrapolate to zero outside the grid
         )
         self._path = resolved
         print(f"  GridFieldComponent: loaded {filepath} — "
@@ -88,6 +89,169 @@ class GridFieldComponent:
     def evaluate(self, positions):
         """Return field values at positions (N, 3) -> (N,)."""
         return self._interp(positions)
+
+
+class LineFieldComponent:
+    """Single scalar field loaded from a 2-column profile file.
+
+    File format: position, value (comma or whitespace separated).
+    Header/comment rows are tolerated. The profile is linearly interpolated
+    and clamped to edge values outside the sampled range.
+    """
+
+    def __init__(self, filepath):
+        resolved = filepath
+        if not os.path.isabs(filepath):
+            resolved = os.path.join(os.getcwd(), filepath)
+
+        # Detect if first non-empty, non-comment line is a header
+        skip = 0
+        with open(resolved, 'r') as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    skip += 1
+                    continue
+                try:
+                    float(line.split('\t')[0].split(',')[0])
+                except ValueError:
+                    skip += 1  # first data-like line is a text header
+                break
+
+        data = None
+        for delim in ('\t', ',', None):
+            try:
+                candidate = np.genfromtxt(
+                    resolved,
+                    dtype=np.float64,
+                    delimiter=delim,
+                    skip_header=skip,  # ← skip the header row
+                    invalid_raise=False,
+                    comments='#',
+                )
+                candidate = np.atleast_2d(candidate)
+                finite_rows = np.isfinite(candidate).all(axis=1)
+                if candidate.shape[1] >= 2 and finite_rows.sum() >= 2:
+                    data = candidate[finite_rows]
+                    break
+            except Exception:
+                continue
+
+        if data is None or data.size == 0:
+            raise ValueError(f"Could not parse any numeric data from {filepath}")
+
+        pos = np.asarray(data[:, 0], dtype=np.float64)
+        val = np.asarray(data[:, 1], dtype=np.float64)
+        valid = np.isfinite(pos) & np.isfinite(val)
+        pos = pos[valid]
+        val = val[valid]
+
+        if pos.size < 2:
+            raise ValueError(f"Profile in {filepath} must contain at least 2 valid rows")
+
+        order = np.argsort(pos)
+        pos = pos[order]
+        val = val[order]
+
+        # Deduplicate repeated coordinates by averaging values.
+        uniq_pos, inv = np.unique(pos, return_inverse=True)
+        uniq_val = np.zeros_like(uniq_pos)
+        counts = np.zeros_like(uniq_pos)
+        np.add.at(uniq_val, inv, val)
+        np.add.at(counts, inv, 1.0)
+        uniq_val /= np.maximum(counts, 1.0)
+
+        if uniq_pos.size < 2:
+            raise ValueError(f"Profile in {filepath} must contain at least 2 distinct positions")
+
+        self._interp = interp1d(
+            uniq_pos,
+            uniq_val,
+            kind='linear',
+            bounds_error=False,
+            fill_value=(uniq_val[0], uniq_val[-1]),
+        )
+        self._path = resolved
+        print(
+            f"  LineFieldComponent: loaded {filepath} — "
+            f"points {uniq_pos.size}, "
+            f"x-range [{uniq_pos[0]:.4e}, {uniq_pos[-1]:.4e}], "
+            f"range [{uniq_val.min():.4e}, {uniq_val.max():.4e}]"
+        )
+
+    def evaluate(self, coordinates):
+        """Return field values at coordinates (N,) -> (N,)."""
+        return np.asarray(self._interp(coordinates), dtype=np.float64)
+
+
+class LineFieldComponent:
+    """Single scalar field loaded from a 2-column profile file.
+
+    File format: position, value (comma or whitespace separated).
+    Header/comment rows are tolerated. The profile is linearly interpolated
+    and clamped to edge values outside the sampled range.
+    """
+
+    def __init__(self, filepath):
+        resolved = filepath
+        if not os.path.isabs(filepath):
+            resolved = os.path.join(os.path.dirname(__file__), filepath)
+
+        try:
+            data = np.loadtxt(resolved, dtype=np.float64, delimiter=',')
+        except Exception:
+            # Fall back to a tolerant reader so files may include headers.
+            data = np.genfromtxt(resolved, dtype=np.float64, invalid_raise=False)
+
+        data = np.atleast_2d(data)
+        if data.shape[1] < 2:
+            raise ValueError(
+                f"Expected at least 2 columns (position,value) in {filepath}, "
+                f"got shape {data.shape}"
+            )
+
+        pos = np.asarray(data[:, 0], dtype=np.float64)
+        val = np.asarray(data[:, 1], dtype=np.float64)
+        valid = np.isfinite(pos) & np.isfinite(val)
+        pos = pos[valid]
+        val = val[valid]
+
+        if pos.size < 2:
+            raise ValueError(f"Profile in {filepath} must contain at least 2 valid rows")
+
+        order = np.argsort(pos)
+        pos = pos[order]
+        val = val[order]
+
+        # Deduplicate repeated coordinates by averaging values.
+        uniq_pos, inv = np.unique(pos, return_inverse=True)
+        uniq_val = np.zeros_like(uniq_pos)
+        counts = np.zeros_like(uniq_pos)
+        np.add.at(uniq_val, inv, val)
+        np.add.at(counts, inv, 1.0)
+        uniq_val /= np.maximum(counts, 1.0)
+
+        if uniq_pos.size < 2:
+            raise ValueError(f"Profile in {filepath} must contain at least 2 distinct positions")
+
+        self._interp = interp1d(
+            uniq_pos,
+            uniq_val,
+            kind='linear',
+            bounds_error=False,
+            fill_value=(uniq_val[0], uniq_val[-1]),
+        )
+        self._path = resolved
+        print(
+            f"  LineFieldComponent: loaded {filepath} — "
+            f"points {uniq_pos.size}, "
+            f"x-range [{uniq_pos[0]:.4e}, {uniq_pos[-1]:.4e}], "
+            f"range [{uniq_val.min():.4e}, {uniq_val.max():.4e}]"
+        )
+
+    def evaluate(self, coordinates):
+        """Return field values at coordinates (N,) -> (N,)."""
+        return np.asarray(self._interp(coordinates), dtype=np.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +265,7 @@ class CompositeFieldProvider(ExternalFieldProvider):
         {"mode": "zero"}
         {"mode": "fixed", "value": float}
         {"mode": "file", "file": "path/to/Bx.fld"}
+        {"mode": "profile_x", "file": "path/to/Bx_profile.csv"}
         {"mode": "rid_ey", "v_rid_v": 20e3, "x_min_m": 5.4, "x_max_m": 7.2}
     """
 
@@ -115,6 +280,8 @@ class CompositeFieldProvider(ExternalFieldProvider):
                 self._sources[key] = ("fixed", float(cfg.get("value", 0.0)))
             elif mode == "file":
                 self._sources[key] = ("grid", GridFieldComponent(cfg["file"]))
+            elif mode in ("profile_x", "line"):
+                self._sources[key] = ("line", LineFieldComponent(cfg["file"]))
             elif mode == "rid_ey" and key == "Ey":
                 self._sources[key] = ("rid_ey", {
                     "v_rid_v": float(cfg.get("v_rid_v", 20e3)),
@@ -141,6 +308,8 @@ class CompositeFieldProvider(ExternalFieldProvider):
                 arr[:, col] = src[1] * scale
             elif src[0] == "grid":
                 arr[:, col] = src[1].evaluate(positions_m) * scale
+            elif src[0] == "line":
+                arr[:, col] = src[1].evaluate(positions_m[:, 0]) * scale
             elif src[0] == "rid_ey":
                 params = src[1]
                 field_mag = params["v_rid_v"] / 0.108

@@ -171,6 +171,41 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
             max_impact_records=max_impact_records_per_mesh,
             em_bvh_checkpoint_distance_m=config.EM_BVH_CHECKPOINT_DISTANCE_M,
         )
+    elif tracking_mode == "em_track_then_bvh_warp":
+        reaction_model_cfg = dict(config.REACTION_MODEL or {})
+        reaction_model_cfg.setdefault(
+            "density_direction",
+            getattr(config, "DENSITY_DIRECTION", getattr(config, "MAIN_BEAM_AXIS_DIRECTION", [1.0, 0.0, 0.0])),
+        )
+        run_em_prerun_analysis(
+            particle_sources_list=particle_sources_list,
+            external_field_cfg=config.EXTERNAL_FIELD,
+            reaction_model_cfg=reaction_model_cfg,
+            bbox_min_corner_m=config.EM_BOUNDING_BOX_MIN_CORNER_M,
+            bbox_max_corner_m=config.EM_BOUNDING_BOX_MAX_CORNER_M,
+            output_dir_for_run=output_dir_for_run,
+            em_step_length_m=config.EM_STEP_LENGTH_M,
+        )
+        deposited_power, impact_data, per_species_power = engine_warp.run_simulation_em_track_then_bvh_warp(
+            scene_mesh,
+            face_offsets,
+            face_counts,
+            particle_sources_list,
+            config.get_deposition_fraction,
+            particle_batch_size=config.PARTICLE_BATCH_SIZE,
+            num_cpu_cores=config.NUM_CPU_CORES,
+            em_step_length_m=config.EM_STEP_LENGTH_M,
+            em_max_steps=config.EM_MAX_STEPS,
+            em_max_distance_m=config.EM_MAX_DISTANCE_M,
+            em_min_energy_ev=config.EM_MIN_ENERGY_EV,
+            external_field_cfg=config.EXTERNAL_FIELD,
+            reaction_model_cfg=reaction_model_cfg,
+            bounding_box_min_corner_m=config.EM_BOUNDING_BOX_MIN_CORNER_M,
+            bounding_box_max_corner_m=config.EM_BOUNDING_BOX_MAX_CORNER_M,
+            save_impact_flags=save_impact_flags_per_mesh,
+            max_impact_records=max_impact_records_per_mesh,
+            em_bvh_checkpoint_distance_m=config.EM_BVH_CHECKPOINT_DISTANCE_M,
+        )
     else:
         raise ValueError(
             f"Unknown TRACKING_MODE: '{tracking_mode}'. "

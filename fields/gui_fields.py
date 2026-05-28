@@ -10,22 +10,18 @@ from tkinter import ttk, filedialog, messagebox
 import os
 
 import numpy as np
-# Using standard scipy constants. If your custom 'particles' package
-# is mandatory, change this back to: from particles.constants import ...
-from scipy.constants import e as ELEMENTARY_CHARGE_C, m_p as HYDROGEN_MASS_KG
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.figure import Figure
 
-# Deuterium mass isn't standard in scipy.constants; approximating as ~2 * proton mass
-DEUTERIUM_MASS_KG = HYDROGEN_MASS_KG * 1.999
-
-from fields.field_provider import create_field_provider
 from gui_widgets.gui_widgets import make_card, _SCRIPT_DIR
-
 
 # ---------------------------------------------------------------------------
 #  Helpers
 # ---------------------------------------------------------------------------
 _MODE_LABELS = {"zero": "None", "fixed": "Fixed value",
-                "file": "Field file (.fld)", "rid_ey": "ERID (simplified)"}
+                "file": "Field file (.fld)",
+                "profile_x": "X profile file (x,value)",
+                "rid_ey": "ERID (simplified)"}
 _MODE_MAP = {v: k for k, v in _MODE_LABELS.items()}   # reverse
 
 
@@ -78,15 +74,15 @@ class FieldsTab(ttk.Frame):
 
         # --- Magnetic Field card ---
         b_card = make_card(self, "Magnetic Field", pady=(12, 10))
-        b_modes = ["None", "Fixed value", "Field file (.fld)"]
+        b_modes = ["None", "Fixed value", "Field file (.fld)", "X profile file (x,value)"]
         for i, (label, key) in enumerate([("Bx:", "Bx"), ("By:", "By"), ("Bz:", "Bz")]):
             self._make_comp_row(b_card, i, label, key, b_modes, comps.get(key, {}))
         b_card.columnconfigure(2, weight=1)
 
         # --- Electric Field card ---
         e_card = make_card(self, "Electric Field")
-        e_modes = ["None", "Fixed value", "Field file (.fld)"]
-        ey_modes = ["None", "Fixed value", "Field file (.fld)", "ERID (simplified)"]
+        e_modes = ["None", "Fixed value", "Field file (.fld)", "X profile file (x,value)"]
+        ey_modes = ["None", "Fixed value", "Field file (.fld)", "X profile file (x,value)", "ERID (simplified)"]
         for i, (label, key, modes) in enumerate([
             ("Ex:", "Ex", e_modes), ("Ey:", "Ey", ey_modes), ("Ez:", "Ez", e_modes)
         ]):
@@ -119,12 +115,156 @@ class FieldsTab(ttk.Frame):
                   style="Card.TLabel", font=("Segoe UI", 10)).pack(
             side="left", padx=(12, 0))
 
+        # --- Field line probe plotter card ---
+        probe_card = make_card(self, "Field Line Probe Plotter")
+
+        content_row = ttk.Frame(probe_card, style="Card.TFrame")
+        content_row.pack(fill="both", expand=True)
+
+        controls_frm = ttk.Frame(content_row, style="Card.TFrame")
+        controls_frm.pack(side="left", fill="y", padx=(0, 10))
+        plot_frm = ttk.Frame(content_row, style="Card.TFrame")
+        plot_frm.pack(side="left", fill="both", expand=True)
+
+        start_row = ttk.Frame(controls_frm, style="Card.TFrame")
+        start_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(start_row, text="Start (x0,y0,z0) [m]:", style="Card.TLabel").pack(side="left")
+        self.var_probe_start = tk.StringVar(value="0.0,0.0,0.0")
+        ttk.Entry(start_row, textvariable=self.var_probe_start, width=28).pack(side="left", padx=(6, 0))
+
+        dir_row = ttk.Frame(controls_frm, style="Card.TFrame")
+        dir_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(dir_row, text="Direction (dirx,diry,dirz):", style="Card.TLabel").pack(side="left")
+        self.var_probe_dir = tk.StringVar(value="1.0,0.0,0.0")
+        ttk.Entry(dir_row, textvariable=self.var_probe_dir, width=28).pack(side="left", padx=(6, 0))
+
+        param_row = ttk.Frame(controls_frm, style="Card.TFrame")
+        param_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(param_row, text="Step [m]:", style="Card.TLabel").pack(side="left")
+        self.var_probe_step = tk.DoubleVar(value=0.01)
+        ttk.Entry(param_row, textvariable=self.var_probe_step, width=10).pack(side="left", padx=(6, 10))
+        ttk.Label(param_row, text="#Points:", style="Card.TLabel").pack(side="left")
+        self.var_probe_npts = tk.IntVar(value=200)
+        ttk.Entry(param_row, textvariable=self.var_probe_npts, width=8).pack(side="left", padx=(6, 10))
+
+        select_row = ttk.Frame(controls_frm, style="Card.TFrame")
+        select_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(select_row, text="Components:", style="Card.TLabel").pack(side="left", padx=(0, 6))
+        self._probe_component_vars = {
+            "Bx": tk.BooleanVar(value=True),
+            "By": tk.BooleanVar(value=False),
+            "Bz": tk.BooleanVar(value=False),
+            "Ex": tk.BooleanVar(value=False),
+            "Ey": tk.BooleanVar(value=False),
+            "Ez": tk.BooleanVar(value=False),
+        }
+        for comp in ("Bx", "By", "Bz", "Ex", "Ey", "Ez"):
+            ttk.Checkbutton(select_row, text=comp,
+                            variable=self._probe_component_vars[comp]).pack(side="left", padx=(0, 6))
+
+        action_row = ttk.Frame(controls_frm, style="Card.TFrame")
+        action_row.pack(fill="x")
+        ttk.Button(action_row, text="Plot Selected Components", style="Secondary.TButton",
+                   command=self._plot_field_probe).pack(side="left")
+
+        self._probe_fig = Figure(figsize=(6.8, 3.6), dpi=100)
+        self._probe_ax = self._probe_fig.add_subplot(111)
+        self._probe_canvas = FigureCanvasTkAgg(self._probe_fig, master=plot_frm)
+        self._probe_canvas.get_tk_widget().pack(fill="both", expand=True)
+        self._probe_toolbar = NavigationToolbar2Tk(self._probe_canvas, plot_frm, pack_toolbar=False)
+        self._probe_toolbar.update()
+        self._probe_toolbar.pack(side="bottom", fill="x")
+
+    def _plot_field_probe(self):
+        """Plot selected E/B components sampled along a user-defined line."""
+        if not self._get_collect:
+            messagebox.showerror("Field Plotter", "No configuration callback available.")
+            return
+
+        try:
+            from fields.field_provider import create_field_provider
+
+            p0 = np.asarray([float(v) for v in self.var_probe_start.get().split(",")], dtype=np.float64)
+            direction = np.asarray([float(v) for v in self.var_probe_dir.get().split(",")], dtype=np.float64)
+            if p0.shape != (3,) or direction.shape != (3,):
+                raise ValueError("Start and direction must be 3 comma-separated values")
+
+            step = float(self.var_probe_step.get())
+            npts = int(self.var_probe_npts.get())
+            selected_components = [
+                c for c in ("Bx", "By", "Bz", "Ex", "Ey", "Ez")
+                if self._probe_component_vars[c].get()
+            ]
+            if not selected_components:
+                raise ValueError("Select at least one component to plot")
+
+            if step <= 0:
+                raise ValueError("Step length must be > 0")
+            if npts < 2:
+                raise ValueError("Number of points must be at least 2")
+            dnorm = float(np.linalg.norm(direction))
+            if dnorm <= 0.0:
+                raise ValueError("Direction vector must be non-zero")
+
+            unit_dir = direction / dnorm
+            idx = np.arange(npts, dtype=np.float64)
+            distances = idx * step
+            points = p0[np.newaxis, :] + distances[:, np.newaxis] * unit_dir[np.newaxis, :]
+
+            cfg = self._get_collect()
+            ef_cfg = cfg.get("EXTERNAL_FIELD", {})
+            fp = create_field_provider(ef_cfg)
+            e_field, b_field = fp.sample(points, np.zeros(npts, dtype=np.float64))
+            e_arr = np.asarray(e_field, dtype=np.float64)
+            b_arr = np.asarray(b_field, dtype=np.float64)
+
+            data_by_comp = {
+                "Bx": b_arr[:, 0],
+                "By": b_arr[:, 1],
+                "Bz": b_arr[:, 2],
+                "Ex": e_arr[:, 0],
+                "Ey": e_arr[:, 1],
+                "Ez": e_arr[:, 2],
+            }
+            units_by_comp = {
+                "Bx": "T", "By": "T", "Bz": "T",
+                "Ex": "V/m", "Ey": "V/m", "Ez": "V/m",
+            }
+
+            ax = self._probe_ax
+            ax.clear()
+            for comp in selected_components:
+                ax.plot(distances, data_by_comp[comp], linewidth=1.8,
+                        label=f"{comp} [{units_by_comp[comp]}]")
+            ax.set_xlabel("Distance along probe line [m]")
+            ax.set_ylabel("Field component value")
+            ax.set_title(
+                f"Components {', '.join(selected_components)} along line: "
+                f"start=({p0[0]:.3g},{p0[1]:.3g},{p0[2]:.3g}), "
+                f"dir=({unit_dir[0]:.3g},{unit_dir[1]:.3g},{unit_dir[2]:.3g}), "
+                f"step={step:.3g} m, n={npts}"
+            )
+            ax.grid(True, alpha=0.3)
+            ax.legend(fontsize=9)
+            self._probe_fig.tight_layout()
+            self._probe_canvas.draw_idle()
+
+        except Exception as exc:
+            messagebox.showerror("Field Plotter", f"Failed to plot field probe: {exc}")
+
     # ------------------------------------------------------------------
     #  Larmor radius estimate
     # ------------------------------------------------------------------
     def _calc_larmor_radius(self):
         """Estimate Larmor radius from current field config + user-specified species/energy."""
-        try:  # <--- FIXED: Added missing try block
+        if not self._get_collect:
+            self._var_larmor.set("(no config callback)")
+            return
+        try:
+            from particles.constants import (ELEMENTARY_CHARGE_C,
+                                   HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG)
+            from fields.field_provider import create_field_provider
+
             species = self.var_lr_species.get()
             energy_ev = self.var_lr_energy.get()
             if energy_ev <= 0:
@@ -159,6 +299,8 @@ class FieldsTab(ttk.Frame):
     # ------------------------------------------------------------------
     def _make_comp_row(self, card, row, label, key, modes, init_cfg):
         mode = init_cfg.get("mode", "zero")
+        if mode == "line":
+            mode = "profile_x"
         init_mode = _MODE_LABELS.get(mode, "None")
 
         ttk.Label(card, text=label, style="Card.TLabel").grid(
@@ -217,7 +359,7 @@ class FieldsTab(ttk.Frame):
             m = self._comp_vars[k]["mode"].get()
             w = self._comp_widgets[k]
             w["val_frame"].grid() if m == "Fixed value" else w["val_frame"].grid_remove()
-            w["file_frame"].grid() if m == "Field file (.fld)" else w["file_frame"].grid_remove()
+            w["file_frame"].grid() if m in ("Field file (.fld)", "X profile file (x,value)") else w["file_frame"].grid_remove()
             if w["rid_frame"]:
                 w["rid_frame"].grid() if m == "ERID (simplified)" else w["rid_frame"].grid_remove()
             w["scale_frame"].grid() if m != "None" else w["scale_frame"].grid_remove()
@@ -232,7 +374,7 @@ class FieldsTab(ttk.Frame):
         p = filedialog.askopenfilename(
             initialdir=_SCRIPT_DIR,
             title="Select field file",
-            filetypes=[("Field files", "*.fld"), ("All files", "*")])
+            filetypes=[("Field files", "*.fld *.csv *.txt"), ("All files", "*")])
         if p:
             try:
                 rel = os.path.relpath(p, _SCRIPT_DIR)
@@ -257,7 +399,7 @@ class FieldsTab(ttk.Frame):
                 comp["scale"] = scale
             if mode == "fixed":
                 comp["value"] = float(cv["val"].get())
-            elif mode == "file":
+            elif mode in ("file", "profile_x"):
                 comp["file"] = cv["file"].get()
             elif mode == "rid_ey":
                 for rk in ("v_rid_v", "x_min_m", "x_max_m"):
@@ -280,6 +422,8 @@ class FieldsTab(ttk.Frame):
             cv = self._comp_vars[key]
             cfg_comp = comps.get(key, {})
             mode = cfg_comp.get("mode", "zero")
+            if mode == "line":
+                mode = "profile_x"
             cv["mode"].set(_MODE_LABELS.get(mode, "None"))
             cv["val"].set(str(cfg_comp.get("value", 0.0)))
             cv["file"].set(cfg_comp.get("file", ""))

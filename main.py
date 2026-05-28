@@ -463,7 +463,9 @@ class SimGUI(tk.Tk):
         if raw_mode == "em_track_then_bvh":
             initial_mode = "EM Tracing"
         elif raw_mode == "ray_cuda":
-            initial_mode = "Ray Tracing (GPU/CUDA)"
+            initial_mode = "Ray Tracing CUDA"
+        elif raw_mode == "em_track_then_bvh_warp":
+            initial_mode = "EM Tracing CUDA"
         else:
             initial_mode = "Ray Tracing"
 
@@ -472,13 +474,17 @@ class SimGUI(tk.Tk):
 
         # --- 2. Add the new method to the values tuple ---
         mode_combo = ttk.Combobox(mode_frame, textvariable=self.var_tracking_mode,
-                                  values=["Ray Tracing", "Ray Tracing (GPU/CUDA)", "EM Tracing"],
+                                  values=["Ray Tracing", "Ray Tracing CUDA","EM Tracing CUDA", "EM Tracing"],
                                   state="readonly", width=24)
         mode_combo.pack(side="left")
 
         rm = self.cfg.get("REACTION_MODEL", {})
         reactions_on = rm.get("type", "none") not in ("none", "off", "null")
-        self.var_reactions_enabled = tk.BooleanVar(value=reactions_on and raw_mode == "em_track_then_bvh")
+
+        is_em_mode = raw_mode in ("em_track_then_bvh", "em_track_then_bvh_warp")
+
+        self.var_reactions_enabled = tk.BooleanVar(value=reactions_on and is_em_mode)
+
         self._reactions_check = ttk.Checkbutton(
             mode_frame, text="Enable reactions",
             variable=self.var_reactions_enabled, style="Card.TCheckbutton")
@@ -487,15 +493,20 @@ class SimGUI(tk.Tk):
         mode_frame.grid(row=row, column=1, sticky="w", padx=(8, 0))
 
         def _on_mode_change(*_):
-            is_em = self.var_tracking_mode.get() == "EM Tracing"
+            # Check if the selected mode is any of the EM tracing options
+            is_em = self.var_tracking_mode.get() in ("EM Tracing", "EM Tracing CUDA")
+
             state = "normal" if is_em else "disabled"
             self._reactions_check.configure(state=state)
+
             if not is_em:
                 self.var_reactions_enabled.set(False)
+
             for child in self._em_card.winfo_children():
                 try:
                     child.configure(state=state)
                 except tk.TclError:
+                    # Safely catch widgets that don't support the 'state' property
                     pass
 
         self.var_tracking_mode.trace_add("write", _on_mode_change)
@@ -797,15 +808,12 @@ class SimGUI(tk.Tk):
         if tracking_string == "EM Tracing":
             d["TRACKING_MODE"] = "em_track_then_bvh"
             is_em = True
-        elif tracking_string == "Ray Tracing (GPU/CUDA)":
+        elif tracking_string == "Ray Tracing CUDA":
             d["TRACKING_MODE"] = "ray_cuda"
             is_em = False
-
-            # Safety Guard: Automatically throttle batch size for VRAM protection
-            # If the current config batch size is over 500k, cap it to prevent GPU OOM crashes.
-            current_batch = d.get("PARTICLE_BATCH_SIZE", 2500000)
-            if current_batch > 500000:
-                d["PARTICLE_BATCH_SIZE"] = 500000
+        elif tracking_string == "EM Tracing CUDA":
+            d["TRACKING_MODE"] = "em_track_then_bvh_warp"
+            is_em = False
         else:
             d["TRACKING_MODE"] = "ray"
             is_em = False
@@ -883,34 +891,47 @@ class SimGUI(tk.Tk):
     def _refresh_all_from_cfg(self):
         """Push self.cfg values back into every GUI widget."""
         c = self.cfg
+
         # General — tracking method
         raw_mode = c.get("TRACKING_MODE", "ray")
-        self.var_tracking_mode.set("EM Tracing" if raw_mode == "em_track_then_bvh" else "Ray Tracing")
+
+        # FIX 1: Using the 'in' operator for cleaner multiple-choice checking
+        is_em_mode = raw_mode in ("em_track_then_bvh", "em_track_then_bvh_warp")
+        self.var_tracking_mode.set("EM Tracing" if is_em_mode else "Ray Tracing")
+
         rm = c.get("REACTION_MODEL", {})
         reactions_on = rm.get("type", "none") not in ("none", "off", "null")
-        self.var_reactions_enabled.set(reactions_on and raw_mode == "em_track_then_bvh")
+
+        # FIX 2: Grouped with parenthesis so 'and' applies to the result of the 'in' check
+        self.var_reactions_enabled.set(reactions_on and is_em_mode)
+
         # General — engine
         self.var_cpu.set(c.get("NUM_CPU_CORES", 1))
         self.var_cache.set(c.get("GEOMETRY_CACHE_DIR", "geometry_cache"))
         self.var_pv_path.set(c.get("PARAVIEW_PATH", "paraview"))
         self.var_pv_module.set(c.get("PARAVIEW_MODULE", "ParaView"))
+
         # Geometry / Particles / Output — delegated
         self._geometry_tab.refresh(c)
         self._particles_tab.refresh(c)
         self._output_tab.refresh(c)
         self._results_tab.var_ENABLE_VISUALIZATION.set(c.get("ENABLE_VISUALIZATION", True))
+
         # Fields — EM settings
         self.var_em_step.set(c.get("EM_STEP_LENGTH_M", 0.02))
         self.var_em_max_steps.set(c.get("EM_MAX_STEPS", 500))
         v = c.get("EM_MIN_ENERGY_EV")
         self.var_em_min_energy.set(str(v) if v is not None else "")
         self.var_em_checkpoint.set(c.get("EM_BVH_CHECKPOINT_DISTANCE_M", 1.0))
+
         bbox_min = c.get("EM_BOUNDING_BOX_MIN_CORNER_M") or [0.0, -0.5, -1.3]
         self.var_bbox_min.set(f"{bbox_min[0]}, {bbox_min[1]}, {bbox_min[2]}")
         bbox_max = c.get("EM_BOUNDING_BOX_MAX_CORNER_M") or [13.0, 0.5, 0.8]
         self.var_bbox_max.set(f"{bbox_max[0]}, {bbox_max[1]}, {bbox_max[2]}")
+
         # Fields — per-component (delegated)
         self._fields_tab.refresh(c)
+
         # Reactions (delegated)
         self._reactions_tab.refresh(c)
 
