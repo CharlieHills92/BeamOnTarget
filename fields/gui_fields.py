@@ -182,7 +182,7 @@ class FieldsTab(ttk.Frame):
             return
 
         try:
-            from fields.field_provider import create_field_provider
+            from field_provider import create_field_provider
 
             p0 = np.asarray([float(v) for v in self.var_probe_start.get().split(",")], dtype=np.float64)
             direction = np.asarray([float(v) for v in self.var_probe_dir.get().split(",")], dtype=np.float64)
@@ -263,7 +263,7 @@ class FieldsTab(ttk.Frame):
         try:
             from constants import (ELEMENTARY_CHARGE_C,
                                    HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG)
-            from fields.field_provider import create_field_provider
+            from field_provider import create_field_provider
 
             species = self.var_lr_species.get()
             energy_ev = self.var_lr_energy.get()
