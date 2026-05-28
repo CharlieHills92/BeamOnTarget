@@ -13,7 +13,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
-from gui_widgets.gui_widgets import make_card, _SCRIPT_DIR
+from gui_widgets import make_card, _SCRIPT_DIR
 
 # ---------------------------------------------------------------------------
 #  Helpers
@@ -261,7 +261,7 @@ class FieldsTab(ttk.Frame):
             self._var_larmor.set("(no config callback)")
             return
         try:
-            from particles.constants import (ELEMENTARY_CHARGE_C,
+            from constants import (ELEMENTARY_CHARGE_C,
                                    HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG)
             from fields.field_provider import create_field_provider
 

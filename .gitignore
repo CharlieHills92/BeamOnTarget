@@ -22,3 +22,7 @@
 *.iml
 /geometry/models/CAL/BENCHMARK.stl
 /3D_MODELS/
+*.dens
+*.json
+*.fld
+venv/

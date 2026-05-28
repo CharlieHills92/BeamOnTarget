@@ -12,8 +12,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.patches import Rectangle
 
-from gui_widgets.gui_widgets import make_card, _SCRIPT_DIR, resolve_path as _resolve_path
-
+from gui_widgets import make_card, _SCRIPT_DIR, resolve_path as _resolve_path
 
 
 class GeometryTab(ttk.Frame):

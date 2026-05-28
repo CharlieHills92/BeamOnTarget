@@ -18,7 +18,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
-from gui_widgets.gui_widgets import make_card, parse_vec3, _SCRIPT_DIR
+from gui_widgets import make_card, parse_vec3, _SCRIPT_DIR
 
 # ---------------------------------------------------------------------------
 #  ReactionsTab
@@ -370,7 +370,7 @@ class ReactionsTab(ttk.Frame):
     #  Diagnostic plots
     # ------------------------------------------------------------------
     def _plot_cross_sections(self):
-        import particles.cross_sections as cs
+        import cross_sections as cs
         iso = self.var_plot_species.get()
         energy = np.logspace(1, 7, 500)
         sigma_ss = np.maximum(cs.cs_hm_single_strip(energy, isotope=iso), 1e-25)
@@ -402,7 +402,7 @@ class ReactionsTab(ttk.Frame):
         self._rxn_canvas.draw()
 
     def _plot_gas_density(self):
-        from reactions.reactions import BeamCrossSectionReaction
+        from reactions import BeamCrossSectionReaction
 
         density_dir = parse_vec3(self.var_density_dir.get())
         bbox_min = self._get_bbox_min()
@@ -415,7 +415,7 @@ class ReactionsTab(ttk.Frame):
             return
         dir_arr /= dir_norm
 
-        from prerun_analysis.prerun_analysis import _ray_exit_distance_from_box
+        from prerun_analysis import _ray_exit_distance_from_box
         start = np.array(bbox_min, dtype=np.float64)
         line_len = _ray_exit_distance_from_box(start, dir_arr, bbox_min, bbox_max)
         if line_len is None or line_len <= 0:
@@ -458,8 +458,8 @@ class ReactionsTab(ttk.Frame):
         self._rxn_canvas.draw()
 
     def _plot_species_evolution(self):
-        import particles.cross_sections as cs
-        from reactions.reactions import BeamCrossSectionReaction
+        import cross_sections as cs
+        from reactions import BeamCrossSectionReaction
 
         bbox_min = self._get_bbox_min()
         bbox_max = self._get_bbox_max()
@@ -484,7 +484,7 @@ class ReactionsTab(ttk.Frame):
             return
         dir_arr /= dir_norm
 
-        from prerun_analysis.prerun_analysis import _ray_exit_distance_from_box
+        from prerun_analysis import _ray_exit_distance_from_box
         start = np.array(bbox_min, dtype=np.float64)
         line_len = _ray_exit_distance_from_box(start, dir_arr, bbox_min, bbox_max)
         if line_len is None or line_len <= 0:
@@ -501,7 +501,7 @@ class ReactionsTab(ttk.Frame):
 
         iso = self.var_plot_species.get()
         avg_energy_ev = self.var_plot_energy.get()
-        from particles.constants import HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG, ELEMENTARY_CHARGE_C
+        from constants import HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG, ELEMENTARY_CHARGE_C
         avg_mass_kg = HYDROGEN_MASS_KG if iso == "H" else DEUTERIUM_MASS_KG
         avg_speed = np.sqrt(2.0 * avg_energy_ev * ELEMENTARY_CHARGE_C / avg_mass_kg)
 
@@ -576,9 +576,9 @@ class ReactionsTab(ttk.Frame):
             self._var_mfp.set("(no config callback)")
             return
         try:
-            import particles.cross_sections as cs
-            from reactions.reactions import BeamCrossSectionReaction
-            from prerun_analysis.prerun_analysis import _ray_exit_distance_from_box
+            import cross_sections as cs
+            from reactions import BeamCrossSectionReaction
+            from prerun_analysis import _ray_exit_distance_from_box
 
             bbox_min = self._get_bbox_min()
             bbox_max = self._get_bbox_max()

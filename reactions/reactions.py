@@ -2,10 +2,9 @@
 
 import os
 import numpy as np
+from constants import ELEMENTARY_CHARGE_C, HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG
+import cross_sections
 from scipy.interpolate import interp1d
-
-from particles.constants import ELEMENTARY_CHARGE_C, HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG
-import particles.cross_sections as cross_sections
 
 
 class ReactionModel:
@@ -83,15 +82,12 @@ class BeamCrossSectionReaction(ReactionModel):
         if not path.lower().endswith(".dens"):
             raise ValueError("density_profile_file must have .dens extension")
 
-        # FIX: Look in the active working directory instead of the file's home directory
         if not os.path.isabs(path):
-            working_dir = os.getcwd()
+            base_dir = os.path.dirname(__file__)
             if os.path.dirname(path):
-                # Handles paths like "RelativeDir/profile.dens"
-                path = os.path.abspath(os.path.join(working_dir, path))
+                path = os.path.abspath(os.path.join(base_dir, path))
             else:
-                # Handles naked filenames like "profile.dens", falling back to your subfolder fallback
-                path = os.path.abspath(os.path.join(working_dir, "InputFiles", path))
+                path = os.path.abspath(os.path.join(base_dir, "../InputFiles", path))
 
         self.density_profile_file_resolved = path
 
