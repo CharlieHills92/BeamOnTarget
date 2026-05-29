@@ -85,7 +85,7 @@
     "RUN_SMOOTHER_AFTER_SIM": false,
     "SMOOTHING_RADIUS": 0.02,
     "SMOOTHING_MAX_CELL_AREA": 4e-06,
-    "SMOOTHING_NORMAL_THRESHOLD_DEG": 7.0,
+    "SMOOTHING_NORMAL_THRESHOLD_DEG": 6.0,
     "PARAVIEW_PATH": "/work/imas/opt/EasyBuild/software/ParaView/5.12.0-intel-2023b/bin/paraview",
     "PARAVIEW_MODULE": "ParaView"
 }
