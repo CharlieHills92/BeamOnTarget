@@ -251,7 +251,7 @@ def main(argv=None):
 
     print(f"\n=== Smoothing Configuration ===")
     print(f"  Radius           : {radius} m")
-    print(f"  Max cell area    : {max_cell_area} m²")
+    print(f"  Max cell area    : {max_cell_area} m2")
     print(f"  Normal Threshold : {normal_threshold} deg")  # Added feedback
     print(f"  Directories      : {len(dirs_to_process)}")
     print(f"===============================")

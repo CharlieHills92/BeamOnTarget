@@ -83,11 +83,21 @@ def main():
             f"Defaults to {config.SMOOTHING_MAX_CELL_AREA}.  Set to 0 to smooth all cells with power."
         ),
     )
+    parser.add_argument(
+        "-n", "--normal_threshold",
+        type=float,
+        default=getattr(config, "SMOOTHING_NORMAL_THRESHOLD_DEG", 7.0),
+        help=(
+            f"Normal angle threshold in degrees for neighbour filtering.\n"
+            f"Defaults to {getattr(config, 'SMOOTHING_NORMAL_THRESHOLD_DEG', 7.0)}."
+        ),
+    )
     args = parser.parse_args()
 
     input_dir = args.input_dir
     radius = args.radius
     max_cell_area = args.max_cell_area if args.max_cell_area > 0 else None
+    normal_threshold = args.normal_threshold
 
     if not os.path.isdir(input_dir):
         print(f"FATAL ERROR: Input directory '{input_dir}' not found.")
@@ -114,6 +124,7 @@ def main():
     print(f"\n=== Post-Smoothing Configuration ===")
     print(f"  Smoothing radius : {radius} m")
     print(f"  Max cell area    : {max_cell_area}")
+    print(f"  Normal threshold : {normal_threshold} deg")
     print(f"  Directories      : {len(dirs_to_process)}")
     print(f"====================================\n")
 
@@ -121,7 +132,10 @@ def main():
         print(f"\n[{i}/{len(dirs_to_process)}] Processing: {result_dir}")
         try:
             batch_smoother.batch_process_directory(
-                result_dir, radius=radius, max_cell_area=max_cell_area
+                result_dir,
+                radius=radius,
+                max_cell_area=max_cell_area,
+                normal_threshold_deg=normal_threshold,
             )
         except Exception as e:
             print(f"  ERROR while processing '{result_dir}': {e}")

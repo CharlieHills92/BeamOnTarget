@@ -187,7 +187,9 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
             batch_smoother.batch_process_directory(
                 output_dir_for_run,
                 radius=config.SMOOTHING_RADIUS,
-                max_cell_area=config.SMOOTHING_MAX_CELL_AREA)
+                max_cell_area=config.SMOOTHING_MAX_CELL_AREA,
+                normal_threshold_deg=getattr(config, "SMOOTHING_NORMAL_THRESHOLD_DEG", 7.0),
+            )
         except Exception as e:
             print(f"An error occurred during automatic batch smoothing: {e}")
         print("--- Batch Smoothing Finished ---")
