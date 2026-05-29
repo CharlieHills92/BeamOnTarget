@@ -19,4 +19,12 @@ logs/
 profile_*.log
 prof_output_*.txt
 DDBELLOW_STUDY/OUTPUT*/
-
+3D_MODELS/
+geometry_cache_test/
+*.stl
+BEAM_CONFIGS/0_hnb_test_one_column.bl
+InputFiles/
+*.bl
+*.xlsx
+*.fld
+*.dens
