@@ -277,3 +277,7 @@ def main(argv=None):
                 print(f"  ERROR during smoothed report generation: {e}")
 
     print("\n=== Smoothing Complete ===")
+
+
+if __name__ == "__main__":
+    main()
