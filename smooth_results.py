@@ -26,105 +26,81 @@ import argparse
 import config
 
 # --- Core reusable function ---
-def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
+def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None, normal_threshold_deg=7.0):
     """
-    Applies area-weighted moving average smoothing to a PyVista mesh,
-    now respecting surface orientation (normals) to avoid internal geometry bleeding.
+    Applies area-weighted moving average smoothing to a PyVista mesh.
+    Only neighbours with a normal within 'normal_threshold_deg' are considered.
     """
-    # --- Validate inputs -----------------------------------------------------------
     if 'Deposited_Power_W' not in mesh.cell_data:
-        print("  - WARNING: 'Deposited_Power_W' not found in cell data.")
         return mesh, None
-
     if radius is None or radius <= 0:
-        print("  - WARNING: No valid smoothing radius provided.")
         return mesh, None
 
     t0 = time.time()
     deposited_power = np.array(mesh.cell_data['Deposited_Power_W'], dtype=np.float64)
     n_cells = mesh.n_cells
 
-    # --- Compute cell areas and centroids ------------------------------------------
-    cell_sizes = mesh.compute_cell_sizes(length=False, area=True, volume=False)
-    areas = np.array(cell_sizes.cell_data['Area'], dtype=np.float64)
-    centroids = mesh.cell_centers().points 
+    # --- Compute Geometry Data ---
+    cell_geom = mesh.compute_cell_sizes(length=False, area=True, volume=False)
+    areas = np.array(cell_geom.cell_data['Area'], dtype=np.float64)
+    centroids = mesh.cell_centers().points
 
-    # --- Compute/Get Normals -------------------------------------------------------
-    # Ensure mesh has cell normals. compute_normals creates 'Normals' in cell_data.
+    # --- Compute Normals for internal geometry separation ---
     if 'Normals' not in mesh.cell_data:
         mesh = mesh.compute_normals(cell_normals=True, point_normals=False, inplace=False)
-    
     cell_normals = np.array(mesh.cell_data['Normals'], dtype=np.float64)
     
-    # Angle threshold: 7 degrees. 
-    # Dot product of two unit vectors = cos(theta).
-    cos_threshold = np.cos(np.deg2rad(7.0))
-    print("looking at face normals deviating 7")
+    # Dot product threshold (cos(theta))
+    cos_threshold = np.cos(np.deg2rad(normal_threshold_deg))
 
-    # --- Initialize Result Array ---------------------------------------------------
-    if 'Power_Density_W_m2' in mesh.cell_data:
-        smoothed_density = np.array(mesh.cell_data['Power_Density_W_m2'], dtype=np.float64)
-    else:
-        smoothed_density = np.divide(deposited_power, areas,
-                                     out=np.zeros(n_cells, dtype=np.float64),
-                                     where=areas > 0)
-
+    # --- Setup Smoothing Target ---
+    smoothed_density = np.divide(deposited_power, areas, out=np.zeros(n_cells), where=areas > 0)
+    
+    # FIX 1: Defined exactly as named in the stats dictionary
     peak_density_before = float(smoothed_density.max())
 
-    # --- Determine which cells need smoothing --------------------------------------
-    if max_cell_area is not None and max_cell_area > 0:
+    if max_cell_area is not None:
         small_mask = (areas < max_cell_area) & (deposited_power > 0)
     else:
         small_mask = deposited_power > 0
     
     small_indices = np.where(small_mask)[0]
+    
+    # FIX 2: Defined exactly as used in the loops
     n_small = len(small_indices)
 
     if n_small == 0:
+        print("  - No cells found matching smoothing criteria.")
         return mesh, None
 
-    # --- Build KDTrees -------------------------------------------------------------
-    print(f"  - Building KDTree for {n_cells:,} centroids...")
+    # --- Spatial Query ---
     tree = cKDTree(centroids)
-    small_centroids = centroids[small_indices]
-    small_tree = cKDTree(small_centroids)
+    small_tree = cKDTree(centroids[small_indices])
+    
+    # FIX 3: Defined consistently for both loops
+    neighbours_list = small_tree.query_ball_tree(tree, r=radius)
 
-    print(f"  - Querying neighbours (Radius: {radius}m, Normal Tol: 7°)...")
-    # Initial spatial query
-    raw_neighbours_list = small_tree.query_ball_tree(tree, r=radius)
-
-    # --- Weighted Average with Normal Filtering ------------------------------------
-    # We iterate through the "small" cells (those targeted for smoothing)
+    # --- Apply Filtered Average (Main Array) ---
+    print(f"  - Smoothing {n_small} cells using Normal Threshold: {normal_threshold_deg} deg...")
     for j in range(n_small):
         target_idx = small_indices[j]
-        neighbor_indices = np.array(raw_neighbours_list[j])
+        # Get the list of spatial neighbor indices for this target cell
+        current_neighbours = np.array(neighbours_list[j])
         
-        if len(neighbor_indices) == 0:
+        if current_neighbours.size == 0: 
             continue
-
-        # Get the normal of the target cell
-        target_normal = cell_normals[target_idx]
         
-        # Get normals of all spatial neighbors
-        neigh_normals = cell_normals[neighbor_indices]
-        
-        # Vectorized dot product: (N, 3) dot (3,) -> (N,)
-        dot_products = np.dot(neigh_normals, target_normal)
-        
-        # Filter: Only keep neighbors facing roughly the same way (0-7 degrees)
-        # Note: dot product of unit vectors is 1.0 if perfectly aligned.
-        valid_mask = dot_products >= cos_threshold
-        final_indices = neighbor_indices[valid_mask]
+        # Filter neighbours by Normal Angle using dot product
+        dots = np.dot(cell_normals[current_neighbours], cell_normals[target_idx])
+        valid_mask = dots >= cos_threshold
+        valid_neighs = current_neighbours[valid_mask]
 
-        if final_indices.size > 0:
-            total_p = np.sum(deposited_power[final_indices])
-            total_a = np.sum(areas[final_indices])
-            smoothed_density[target_idx] = total_p / total_a if total_a > 0 else 0.0
+        if valid_neighs.size > 0:
+            smoothed_density[target_idx] = np.sum(deposited_power[valid_neighs]) / np.sum(areas[valid_neighs])
 
-    # Write back main array
     mesh.cell_data['Power_Density_W_m2'] = smoothed_density
 
-    # --- Smooth per-species arrays (using the same logic) --------------------------
+    # --- Smooth per-species arrays (using same logic) ---
     species_stats = {}
     for key in list(mesh.cell_data.keys()):
         if key.startswith('Deposited_Power_W_') and key != 'Deposited_Power_W':
@@ -132,24 +108,21 @@ def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
             sp_power = np.array(mesh.cell_data[key], dtype=np.float64)
             density_key = f'Power_Density_W_m2_{suffix}'
             
-            # Initial sp_density
             sp_density = np.zeros(n_cells, dtype=np.float64)
             np.divide(sp_power, areas, out=sp_density, where=areas > 0)
             sp_peak_before = float(sp_density.max())
 
-            # Apply filtered smoothing
             for j in range(n_small):
                 target_idx = small_indices[j]
-                neighbor_indices = np.array(raw_neighbours_list[j])
+                current_neighbours = np.array(neighbours_list[j])
+                if current_neighbours.size == 0: 
+                    continue
                 
-                # Filter indices by normal again (could be cached, but simple enough to redo)
-                dot_products = np.dot(cell_normals[neighbor_indices], cell_normals[target_idx])
-                final_indices = neighbor_indices[dot_products >= cos_threshold]
+                dots = np.dot(cell_normals[current_neighbours], cell_normals[target_idx])
+                valid_neighs = current_neighbours[dots >= cos_threshold]
 
-                if final_indices.size > 0:
-                    sp_total = np.sum(sp_power[final_indices])
-                    sp_area = np.sum(areas[final_indices])
-                    sp_density[target_idx] = sp_total / sp_area if sp_area > 0 else 0.0
+                if valid_neighs.size > 0:
+                    sp_density[target_idx] = np.sum(sp_power[valid_neighs]) / np.sum(areas[valid_neighs])
             
             mesh.cell_data[density_key] = sp_density
             species_stats[suffix] = {
@@ -174,7 +147,6 @@ def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
         "max_area_m2": float(areas.max()),
         "species": species_stats,
     }
-    print(f"  - Normal-aware smoothing complete ({elapsed:.1f}s).")
     return mesh, stats
 
 
@@ -213,6 +185,8 @@ def main(argv=None):
     import generate_report
 
     parser = argparse.ArgumentParser(description="Apply smoothing to completed simulation outputs.")
+    
+    # --- 1. Add ALL arguments BEFORE calling parse_args ---
     parser.add_argument(
         '-i', '--input-config',
         default=None,
@@ -226,9 +200,16 @@ def main(argv=None):
         '-a', '--max-cell-area',
         type=float,
         default=None,
-        help="Override maximum smoothed cell area in m^2. Use 0 to smooth all powered cells.")
+        help="Override maximum smoothed cell area in m^2. Use 0 to smooth all cells.")
+    parser.add_argument(
+        '-n', '--normal-threshold',
+        type=float,
+        default=None,
+        help="Angle threshold in degrees for surface normal filtering.")
+
     args = parser.parse_args(argv)
 
+    # --- 2. Load Config first so we have defaults ---
     if args.input_config:
         cfg_path = os.path.abspath(args.input_config)
         if not os.path.isfile(cfg_path):
@@ -238,17 +219,24 @@ def main(argv=None):
         _resolve_config_relative_paths(cfg_path)
         print(f"Using configuration file: {cfg_path}")
 
-    output_root = config.DETAILED_OUTPUT_DIR
-    if not os.path.isdir(output_root):
-        print(f"FATAL ERROR: Output directory '{output_root}' not found.")
-        return
-
+    # --- 3. Resolve Variables (CLI overrides Config) ---
     radius = args.radius if args.radius is not None else config.SMOOTHING_RADIUS
+    
     if args.max_cell_area is None:
         max_cell_area = config.SMOOTHING_MAX_CELL_AREA
     else:
         max_cell_area = args.max_cell_area if args.max_cell_area > 0 else None
 
+    # Use getattr to safely get the attribute from the config module
+    normal_threshold = args.normal_threshold if args.normal_threshold is not None else \
+                       getattr(config, "SMOOTHING_NORMAL_THRESHOLD_DEG", 7.0)
+
+    output_root = config.DETAILED_OUTPUT_DIR
+    if not os.path.isdir(output_root):
+        print(f"FATAL ERROR: Output directory '{output_root}' not found.")
+        return
+
+    # --- 4. Find directories to process ---
     has_direct_results = (glob.glob(os.path.join(output_root, "*.vtp")) or
                           glob.glob(os.path.join(output_root, "*.vtm")))
     subdirs = _find_subdirs_with_results(output_root)
@@ -258,22 +246,25 @@ def main(argv=None):
     elif subdirs:
         dirs_to_process = subdirs
     else:
-        print(f"No .vtp/.vtm files or result subfolders found in '{output_root}'. Nothing to do.")
+        print(f"No .vtp/.vtm files found in '{output_root}'.")
         return
 
     print(f"\n=== Smoothing Configuration ===")
-    print(f"  Radius        : {radius}")
-    print(f"  Max cell area : {max_cell_area}")
-    print(f"  Directories   : {len(dirs_to_process)}")
+    print(f"  Radius           : {radius} m")
+    print(f"  Max cell area    : {max_cell_area} m²")
+    print(f"  Normal Threshold : {normal_threshold} deg")  # Added feedback
+    print(f"  Directories      : {len(dirs_to_process)}")
     print(f"===============================")
 
     for idx, result_dir in enumerate(dirs_to_process, 1):
         print(f"\n[{idx}/{len(dirs_to_process)}] Processing: {result_dir}")
         try:
+            # --- 5. IMPORTANT: Pass normal_threshold here! ---
             batch_smoother.batch_process_directory(
                 result_dir,
                 radius=radius,
-                max_cell_area=max_cell_area)
+                max_cell_area=max_cell_area,
+                normal_threshold_deg=normal_threshold) 
         except Exception as e:
             print(f"  ERROR while smoothing '{result_dir}': {e}")
             continue
@@ -286,7 +277,3 @@ def main(argv=None):
                 print(f"  ERROR during smoothed report generation: {e}")
 
     print("\n=== Smoothing Complete ===")
-
-if __name__ == "__main__":
-    # This block is only executed when you run `python smooth_results.py`
-    main()

@@ -35,7 +35,7 @@ MAX_CELL_AREA = 1e-6
 
 # --- END OF CONFIGURATION ---
 
-def batch_process_directory(input_dir, radius=None, max_cell_area=None):
+def batch_process_directory(input_dir, radius=None, max_cell_area=None, normal_threshold_deg=7.0):
     """
     Finds all result files in the input directory, applies smoothing,
     and saves them to a 'SMOOTHED' subfolder within that directory.
@@ -81,7 +81,8 @@ def batch_process_directory(input_dir, radius=None, max_cell_area=None):
                 combined_stats = None
                 for i in range(dataset_copy.n_blocks):
                     smoothed_block, blk_stats = apply_smoothing(
-                        dataset_copy[i], radius=radius, max_cell_area=max_cell_area)
+                        dataset_copy[i], radius=radius, max_cell_area=max_cell_area,
+                        normal_threshold_deg=normal_threshold_deg)
                     processed_dataset.append(smoothed_block)
                     if blk_stats is not None:
                         if combined_stats is None:
@@ -107,7 +108,9 @@ def batch_process_directory(input_dir, radius=None, max_cell_area=None):
                 stats = combined_stats
             else:
                 final_dataset, stats = apply_smoothing(
-                    dataset_copy, radius=radius, max_cell_area=max_cell_area)
+                    dataset_copy, radius=radius, max_cell_area=max_cell_area,
+                    normal_threshold_deg=normal_threshold_deg)
+
 
             original_filename = os.path.basename(input_path)
             output_filename = f"{OUTPUT_PREFIX}{original_filename}"

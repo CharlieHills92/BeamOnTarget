@@ -165,6 +165,7 @@
     "RUN_SMOOTHER_AFTER_SIM": true,
     "SMOOTHING_RADIUS": 0.04,
     "SMOOTHING_MAX_CELL_AREA": 0.0004,
+    "SMOOTHING_NORMAL_THRESHOLD_DEG": 7.0,
     "PARAVIEW_PATH": "C:/users/attelnd/Work Folders/Desktop/ParaView-6.1.0-Windows-Python3.12-msvc2017-AMD64/bin/paraview.exe",
     "PARAVIEW_MODULE": "ParaView"
 }

@@ -1,28 +1,21 @@
 """Output tab — output directory, file options, and post-processing smoother."""
 import tkinter as tk
 from tkinter import ttk
-
 from gui_widgets import make_card, browse_directory
-
 
 class OutputTab(ttk.Frame):
     """Output paths, save options, and batch smoother configuration."""
 
-    def __init__(self, parent, cfg, colours, *,
-                 open_extract_fn):
+    def __init__(self, parent, cfg, colours, *, open_extract_fn):
         super().__init__(parent)
         self.cfg = cfg
         self._colours = colours
         self._open_extract_dialog = open_extract_fn
         self._build()
 
-    # ------------------------------------------------------------------
-    #  Build UI
-    # ------------------------------------------------------------------
     def _build(self):
         # --- Paths card ---
         card = make_card(self, "Output Settings", pady=(12, 10))
-
         ttk.Label(card, text="Output directory:", style="Card.TLabel").grid(
             row=0, column=0, sticky="w", pady=5)
         self.var_outdir = tk.StringVar(value=self.cfg.get("DETAILED_OUTPUT_DIR", "OUTPUT"))
@@ -42,7 +35,6 @@ class OutputTab(ttk.Frame):
 
         # --- File options card ---
         opts_card = make_card(self, "Save Options")
-
         checkboxes = [
             ("SAVE_PARAVIEW_FILES", "Save ParaView (.vtp) files"),
             ("SAVE_CSV_REPORTS", "Save CSV reports"),
@@ -60,7 +52,6 @@ class OutputTab(ttk.Frame):
 
         # --- Post-Processing Smoother card ---
         sm_card = make_card(self, "Post-Processing Smoother")
-
         self.var_smoother = tk.BooleanVar(value=self.cfg.get("RUN_SMOOTHER_AFTER_SIM", False))
         ttk.Checkbutton(sm_card, text="Run batch smoother after simulation",
                          variable=self.var_smoother,
@@ -69,12 +60,14 @@ class OutputTab(ttk.Frame):
         sm_grid = ttk.Frame(sm_card, style="Card.TFrame")
         sm_grid.pack(fill="x")
 
+        # Row 0: Radius
         ttk.Label(sm_grid, text="Smoothing radius (m):", style="Card.TLabel").grid(
             row=0, column=0, sticky="w", pady=5)
         self.var_sm_radius = tk.DoubleVar(value=self.cfg.get("SMOOTHING_RADIUS", 0.02))
         ttk.Entry(sm_grid, textvariable=self.var_sm_radius, width=12).grid(
             row=0, column=1, sticky="w", padx=(8, 0))
 
+        # Row 1: Max Cell Area
         ttk.Label(sm_grid, text="Max cell area (m², empty=None):", style="Card.TLabel").grid(
             row=1, column=0, sticky="w", pady=5)
         mca = self.cfg.get("SMOOTHING_MAX_CELL_AREA")
@@ -82,9 +75,13 @@ class OutputTab(ttk.Frame):
         ttk.Entry(sm_grid, textvariable=self.var_sm_mca, width=12).grid(
             row=1, column=1, sticky="w", padx=(8, 0))
 
-    # ------------------------------------------------------------------
-    #  collect / refresh
-    # ------------------------------------------------------------------
+        # Row 2: Normal Threshold Angle (NEW)
+        ttk.Label(sm_grid, text="Normal threshold (deg):", style="Card.TLabel").grid(
+            row=2, column=0, sticky="w", pady=5)
+        self.var_sm_angle = tk.DoubleVar(value=self.cfg.get("SMOOTHING_NORMAL_THRESHOLD_DEG", 7.0))
+        ttk.Entry(sm_grid, textvariable=self.var_sm_angle, width=12).grid(
+            row=2, column=1, sticky="w", padx=(8, 0))
+
     def collect(self, d):
         """Write output keys into *d*."""
         d["DETAILED_OUTPUT_DIR"] = self.var_outdir.get()
@@ -93,6 +90,7 @@ class OutputTab(ttk.Frame):
         d["SUMMARY_CSV_FILENAME"] = self.var_summary.get()
         d["RUN_SMOOTHER_AFTER_SIM"] = self.var_smoother.get()
         d["SMOOTHING_RADIUS"] = self.var_sm_radius.get()
+        d["SMOOTHING_NORMAL_THRESHOLD_DEG"] = self.var_sm_angle.get()
         mca = self.var_sm_mca.get().strip()
         d["SMOOTHING_MAX_CELL_AREA"] = float(mca) if mca else None
 
@@ -105,5 +103,6 @@ class OutputTab(ttk.Frame):
         self.var_summary.set(c.get("SUMMARY_CSV_FILENAME", "power_summary_by_object.csv"))
         self.var_smoother.set(c.get("RUN_SMOOTHER_AFTER_SIM", False))
         self.var_sm_radius.set(c.get("SMOOTHING_RADIUS", 0.02))
+        self.var_sm_angle.set(c.get("SMOOTHING_NORMAL_THRESHOLD_DEG", 7.0))
         mca = c.get("SMOOTHING_MAX_CELL_AREA")
         self.var_sm_mca.set(str(mca) if mca is not None else "")
