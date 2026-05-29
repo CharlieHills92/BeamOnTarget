@@ -174,7 +174,12 @@ def trace_particle_batch_em_only(
         speed = np.sqrt(np.maximum(np.einsum('ij,ij->i', v, v), 0.0))
         valid = speed > 1e-12
         speed_safe = np.where(valid, speed, 1.0)
-        dt = em_step_length_m / speed_safe
+        
+        # 2. INSERTed JITTER HERE:
+        # Add a +/- 10% random variation to the step length for each particle
+        # This breaks the "beating" against the field grid and the mesh triangles.
+        jitter = rng.uniform(0.9, 1.1, size=active_idx.size)
+        dt = (em_step_length_m * jitter) / speed_safe
 
         e_field, b_field = field_provider.sample(p, particle_time[active_idx])
         q_over_m = (q_state * ELEMENTARY_CHARGE_C) / np.maximum(m, 1e-30)

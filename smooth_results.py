@@ -28,175 +28,129 @@ import config
 # --- Core reusable function ---
 def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
     """
-    Applies area-weighted moving average smoothing to a PyVista mesh.
-
-    For each cell the algorithm:
-      1. Builds a KDTree of cell centroids for fast spatial queries.
-      2. For every cell, finds all cells whose centroid is within *radius*.
-      3. Computes Power_Density_W_m2 = Sum(Power) / Sum(Area) over that
-         neighbourhood.
-
-    The Deposited_Power_W array is left unchanged (power is conserved per cell).
-    Only the Power_Density_W_m2 array is recomputed.
-
-    Parameters
-    ----------
-    mesh : pyvista.PolyData
-        The mesh with cell data arrays 'Deposited_Power_W' and
-        'Power_Density_W_m2'.
-    radius : float
-        The smoothing radius (same units as the mesh coordinates, typically
-        metres).  If *None*, no smoothing is applied.
-    n_iter : int, optional
-        Accepted for backward-compatibility with the old Laplacian interface
-        but **ignored**.  Use *radius* instead.
-    max_cell_area : float, optional
-        If provided, only cells with area **below** this threshold (in m²)
-        are smoothed.  Larger cells keep their original power density.
-        This dramatically speeds up smoothing on meshes that mix very fine
-        and very coarse regions (e.g. set to 4e-6 for 4 × 10⁻⁶ m²).
-
-    Returns
-    -------
-    mesh : pyvista.PolyData
-        The mesh with updated 'Power_Density_W_m2'.
-    stats : dict
-        Dictionary with smoothing statistics (n_cells, n_smoothed,
-        elapsed_s, total_power_W, peak_density_before, peak_density_after,
-        etc.).  Returns *None* when no smoothing was performed.
+    Applies area-weighted moving average smoothing to a PyVista mesh,
+    now respecting surface orientation (normals) to avoid internal geometry bleeding.
     """
     # --- Validate inputs -----------------------------------------------------------
     if 'Deposited_Power_W' not in mesh.cell_data:
-        print("  - WARNING: 'Deposited_Power_W' not found in cell data. "
-              "Cannot perform area-weighted smoothing.")
+        print("  - WARNING: 'Deposited_Power_W' not found in cell data.")
         return mesh, None
 
     if radius is None or radius <= 0:
-        print("  - WARNING: No valid smoothing radius provided. Returning mesh unchanged.")
+        print("  - WARNING: No valid smoothing radius provided.")
         return mesh, None
 
     t0 = time.time()
     deposited_power = np.array(mesh.cell_data['Deposited_Power_W'], dtype=np.float64)
     n_cells = mesh.n_cells
 
-    # --- Compute cell areas from the mesh ------------------------------------------
-    cell_areas = mesh.compute_cell_sizes(length=False, area=True, volume=False)
-    areas = np.array(cell_areas.cell_data['Area'], dtype=np.float64)
+    # --- Compute cell areas and centroids ------------------------------------------
+    cell_sizes = mesh.compute_cell_sizes(length=False, area=True, volume=False)
+    areas = np.array(cell_sizes.cell_data['Area'], dtype=np.float64)
+    centroids = mesh.cell_centers().points 
 
-    # --- Compute cell centroids ----------------------------------------------------
-    centroids = mesh.cell_centers().points  # (n_cells, 3)
+    # --- Compute/Get Normals -------------------------------------------------------
+    # Ensure mesh has cell normals. compute_normals creates 'Normals' in cell_data.
+    if 'Normals' not in mesh.cell_data:
+        mesh = mesh.compute_normals(cell_normals=True, point_normals=False, inplace=False)
+    
+    cell_normals = np.array(mesh.cell_data['Normals'], dtype=np.float64)
+    
+    # Angle threshold: 7 degrees. 
+    # Dot product of two unit vectors = cos(theta).
+    cos_threshold = np.cos(np.deg2rad(7.0))
+    print("looking at face normals deviating 7")
 
-    # --- Determine which cells need smoothing --------------------------------------
-    # Start with the original (un-smoothed) power density as the baseline.
+    # --- Initialize Result Array ---------------------------------------------------
     if 'Power_Density_W_m2' in mesh.cell_data:
         smoothed_density = np.array(mesh.cell_data['Power_Density_W_m2'], dtype=np.float64)
     else:
-        # Fallback: compute from deposited power and area
         smoothed_density = np.divide(deposited_power, areas,
                                      out=np.zeros(n_cells, dtype=np.float64),
                                      where=areas > 0)
 
     peak_density_before = float(smoothed_density.max())
 
+    # --- Determine which cells need smoothing --------------------------------------
     if max_cell_area is not None and max_cell_area > 0:
         small_mask = (areas < max_cell_area) & (deposited_power > 0)
-        small_indices = np.where(small_mask)[0]
-        n_small = len(small_indices)
-        n_area_only = int(np.sum(areas < max_cell_area))
-        print(f"  - max_cell_area filter: {n_area_only:,} / {n_cells:,} cells "
-              f"below {max_cell_area:.2e} m²")
-        print(f"  - After deposited power > 0 filter: {n_small:,} cells will be smoothed.")
     else:
         small_mask = deposited_power > 0
-        small_indices = np.where(small_mask)[0]
-        n_small = len(small_indices)
-        print(f"  - No area filter; deposited power > 0 filter: "
-              f"{n_small:,} / {n_cells:,} cells will be smoothed.")
+    
+    small_indices = np.where(small_mask)[0]
+    n_small = len(small_indices)
 
     if n_small == 0:
-        print("  - WARNING: No cells match the filtering criteria. Returning mesh unchanged.")
-        # Still compute per-species stats even when no smoothing is needed
-        early_species_stats = {}
-        for key in list(mesh.cell_data.keys()):
-            if key.startswith('Deposited_Power_W_') and key != 'Deposited_Power_W':
-                suffix = key[len('Deposited_Power_W_'):]
-                sp_power = np.array(mesh.cell_data[key], dtype=np.float64)
-                density_key = f'Power_Density_W_m2_{suffix}'
-                if density_key in mesh.cell_data:
-                    sp_dens = np.array(mesh.cell_data[density_key], dtype=np.float64)
-                else:
-                    sp_dens = np.divide(sp_power, areas,
-                                        out=np.zeros(n_cells, dtype=np.float64),
-                                        where=areas > 0)
-                sp_peak = float(sp_dens.max()) if n_cells > 0 else 0.0
-                early_species_stats[suffix] = {
-                    "total_power_W": float(np.sum(sp_power)),
-                    "peak_density_before": sp_peak,
-                    "peak_density_after": sp_peak,
-                }
-        stats = {
-            "n_cells": n_cells,
-            "n_smoothed": 0,
-            "radius": radius,
-            "max_cell_area": max_cell_area,
-            "elapsed_s": 0.0,
-            "total_power_W": float(np.sum(deposited_power)),
-            "peak_density_before": peak_density_before,
-            "peak_density_after": peak_density_before,
-            "min_area_m2": float(areas.min()),
-            "max_area_m2": float(areas.max()),
-            "species": early_species_stats,
-        }
-        return mesh, stats
+        return mesh, None
 
-    # --- Build KDTree on ALL centroids (neighbours can be any cell) ----------------
-    print(f"  - Building KDTree for {n_cells:,} cell centroids ...")
+    # --- Build KDTrees -------------------------------------------------------------
+    print(f"  - Building KDTree for {n_cells:,} centroids...")
     tree = cKDTree(centroids)
-
-    # --- Build a second tree only for the small cells to do the query efficiently --
     small_centroids = centroids[small_indices]
     small_tree = cKDTree(small_centroids)
 
-    print(f"  - Querying neighbours within radius = {radius} m "
-          f"for {n_small:,} small cells ...")
-    # For each small cell, find all cells (including large ones) within radius
-    neighbours_list = small_tree.query_ball_tree(tree, r=radius)
+    print(f"  - Querying neighbours (Radius: {radius}m, Normal Tol: 7°)...")
+    # Initial spatial query
+    raw_neighbours_list = small_tree.query_ball_tree(tree, r=radius)
 
-    print(f"  - Computing area-weighted power density ...")
+    # --- Weighted Average with Normal Filtering ------------------------------------
+    # We iterate through the "small" cells (those targeted for smoothing)
     for j in range(n_small):
-        idx = neighbours_list[j]
-        total_power = np.sum(deposited_power[idx])
-        total_area = np.sum(areas[idx])
-        if total_area > 0:
-            smoothed_density[small_indices[j]] = total_power / total_area
-        else:
-            smoothed_density[small_indices[j]] = 0.0
+        target_idx = small_indices[j]
+        neighbor_indices = np.array(raw_neighbours_list[j])
+        
+        if len(neighbor_indices) == 0:
+            continue
 
-    # --- Write back ----------------------------------------------------------------
+        # Get the normal of the target cell
+        target_normal = cell_normals[target_idx]
+        
+        # Get normals of all spatial neighbors
+        neigh_normals = cell_normals[neighbor_indices]
+        
+        # Vectorized dot product: (N, 3) dot (3,) -> (N,)
+        dot_products = np.dot(neigh_normals, target_normal)
+        
+        # Filter: Only keep neighbors facing roughly the same way (0-7 degrees)
+        # Note: dot product of unit vectors is 1.0 if perfectly aligned.
+        valid_mask = dot_products >= cos_threshold
+        final_indices = neighbor_indices[valid_mask]
+
+        if final_indices.size > 0:
+            total_p = np.sum(deposited_power[final_indices])
+            total_a = np.sum(areas[final_indices])
+            smoothed_density[target_idx] = total_p / total_a if total_a > 0 else 0.0
+
+    # Write back main array
     mesh.cell_data['Power_Density_W_m2'] = smoothed_density
-    # Deposited_Power_W is intentionally left unchanged (conserved).
 
-    # --- Smooth per-species arrays if present --------------------------------------
+    # --- Smooth per-species arrays (using the same logic) --------------------------
     species_stats = {}
     for key in list(mesh.cell_data.keys()):
         if key.startswith('Deposited_Power_W_') and key != 'Deposited_Power_W':
             suffix = key[len('Deposited_Power_W_'):]
             sp_power = np.array(mesh.cell_data[key], dtype=np.float64)
             density_key = f'Power_Density_W_m2_{suffix}'
+            
+            # Initial sp_density
             sp_density = np.zeros(n_cells, dtype=np.float64)
-            if density_key in mesh.cell_data:
-                sp_density = np.array(mesh.cell_data[density_key], dtype=np.float64)
-            else:
-                np.divide(sp_power, areas, out=sp_density, where=areas > 0)
-            sp_peak_before = float(sp_density.max()) if n_cells > 0 else 0.0
+            np.divide(sp_power, areas, out=sp_density, where=areas > 0)
+            sp_peak_before = float(sp_density.max())
+
+            # Apply filtered smoothing
             for j in range(n_small):
-                idx = neighbours_list[j]
-                sp_total = np.sum(sp_power[idx])
-                sp_area = np.sum(areas[idx])
-                if sp_area > 0:
-                    sp_density[small_indices[j]] = sp_total / sp_area
-                else:
-                    sp_density[small_indices[j]] = 0.0
+                target_idx = small_indices[j]
+                neighbor_indices = np.array(raw_neighbours_list[j])
+                
+                # Filter indices by normal again (could be cached, but simple enough to redo)
+                dot_products = np.dot(cell_normals[neighbor_indices], cell_normals[target_idx])
+                final_indices = neighbor_indices[dot_products >= cos_threshold]
+
+                if final_indices.size > 0:
+                    sp_total = np.sum(sp_power[final_indices])
+                    sp_area = np.sum(areas[final_indices])
+                    sp_density[target_idx] = sp_total / sp_area if sp_area > 0 else 0.0
+            
             mesh.cell_data[density_key] = sp_density
             species_stats[suffix] = {
                 "total_power_W": float(np.sum(sp_power)),
@@ -204,13 +158,9 @@ def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
                 "peak_density_after": float(sp_density.max()),
             }
 
-    # Set the active scalar for ParaView convenience
     mesh.cell_data.active_scalars_name = 'Power_Density_W_m2'
-
     elapsed = time.time() - t0
-    print(f"  - Smoothing complete in {elapsed:.1f}s. Total power conserved: "
-          f"{np.sum(deposited_power):.6g} W")
-
+    
     stats = {
         "n_cells": n_cells,
         "n_smoothed": n_small,
@@ -224,7 +174,7 @@ def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None):
         "max_area_m2": float(areas.max()),
         "species": species_stats,
     }
-
+    print(f"  - Normal-aware smoothing complete ({elapsed:.1f}s).")
     return mesh, stats
 
 
