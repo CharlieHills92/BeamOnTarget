@@ -12,11 +12,40 @@ import os, sys
 _IS_FROZEN = getattr(sys, 'frozen', False)
 _SCRIPT_DIR = (os.path.dirname(sys.executable) if _IS_FROZEN
                else os.path.dirname(os.path.abspath(__file__)))
+_PROJECT_FOLDER = _SCRIPT_DIR
+
+
+def set_project_folder(path):
+    """Set the active project folder used for relative GUI paths."""
+    global _PROJECT_FOLDER
+    base = (path or "").strip()
+    if not base:
+        _PROJECT_FOLDER = _SCRIPT_DIR
+        return
+    if not os.path.isabs(base):
+        base = os.path.abspath(os.path.join(_SCRIPT_DIR, base))
+    _PROJECT_FOLDER = base
+
+
+def get_project_folder():
+    """Return the active project folder used for relative GUI paths."""
+    return _PROJECT_FOLDER or _SCRIPT_DIR
+
+
+def to_relative_path(path, base_dir=None):
+    """Return *path* relative to *base_dir* when possible, else unchanged."""
+    if not path:
+        return path
+    base = base_dir or get_project_folder()
+    try:
+        return os.path.relpath(path, base)
+    except ValueError:
+        return path
 
 
 def resolve_path(relative_path):
-    """Resolve a simulation-file path relative to the main application folder."""
-    return os.path.join(_SCRIPT_DIR, relative_path)
+    """Resolve a simulation-file path relative to the active project folder."""
+    return os.path.join(get_project_folder(), relative_path)
 
 
 def parse_vec3(text):
@@ -44,12 +73,9 @@ def make_card(parent, title=None, padx=12, pady=(0, 10)):
 #  Common browsing helpers
 # ---------------------------------------------------------------------------
 def browse_directory(var, title="Select directory"):
-    """Ask user for a directory and store the (relative) path in *var*."""
+    """Ask user for a directory and store it relative to the project folder."""
     from tkinter import filedialog
-    d = filedialog.askdirectory(initialdir=_SCRIPT_DIR, title=title)
+    initial = get_project_folder()
+    d = filedialog.askdirectory(initialdir=initial, title=title)
     if d:
-        try:
-            rel = os.path.relpath(d, _SCRIPT_DIR)
-            var.set(rel)
-        except ValueError:
-            var.set(d)
+        var.set(to_relative_path(d, initial))

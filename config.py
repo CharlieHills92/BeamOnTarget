@@ -58,6 +58,7 @@ def save_config(data=None, path=None):
 def _build_dict():
     """Snapshot the current module-level variables into a dict."""
     return {
+        "PROJECT_FOLDER": PROJECT_FOLDER,
         "NUM_CPU_CORES": NUM_CPU_CORES,
         "ENABLE_DIAGNOSTIC_SURFACES": ENABLE_DIAGNOSTIC_SURFACES,
         "GEOMETRY_CACHE_DIR": GEOMETRY_CACHE_DIR,
@@ -102,6 +103,7 @@ def _apply(d):
     """Set module globals from a config dict."""
     g = globals()
 
+    g["PROJECT_FOLDER"]            = d.get("PROJECT_FOLDER", _CONFIG_DIR)
     g["NUM_CPU_CORES"]              = d.get("NUM_CPU_CORES", 1)
     g["ENABLE_DIAGNOSTIC_SURFACES"] = d.get("ENABLE_DIAGNOSTIC_SURFACES", False)
     g["GEOMETRY_CACHE_DIR"]         = d.get("GEOMETRY_CACHE_DIR", "geometry_cache")

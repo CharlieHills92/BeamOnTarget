@@ -151,15 +151,21 @@ def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None, normal_t
 
 
 def _resolve_config_relative_paths(config_path):
-    """Resolve path-like config entries relative to selected config file."""
-    base_dir = os.path.dirname(os.path.abspath(config_path))
+    """Resolve path-like config entries relative to PROJECT_FOLDER/config file."""
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+    project_folder = str(getattr(config, "PROJECT_FOLDER", "") or "").strip()
+    if not project_folder:
+        project_folder = config_dir
+    elif not os.path.isabs(project_folder):
+        project_folder = os.path.abspath(os.path.join(config_dir, project_folder))
+    config.PROJECT_FOLDER = project_folder
 
     def _abs_if_relative(path_value):
         if not path_value:
             return path_value
         if os.path.isabs(path_value):
             return path_value
-        return os.path.abspath(os.path.join(base_dir, path_value))
+        return os.path.abspath(os.path.join(project_folder, path_value))
 
     config.DETAILED_OUTPUT_DIR = _abs_if_relative(config.DETAILED_OUTPUT_DIR)
 

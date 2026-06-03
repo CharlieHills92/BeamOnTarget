@@ -21,7 +21,14 @@ from PIL import Image, ImageTk
 
 import viewer  # built-in Open3D viewer
 from config import load_config, save_config
-from gui_widgets import make_card, parse_vec3, resolve_path as _resolve_path
+from gui_widgets import (
+    make_card,
+    parse_vec3,
+    resolve_path as _resolve_path,
+    set_project_folder as _set_project_folder,
+    get_project_folder as _get_project_folder,
+    to_relative_path as _to_relative_path,
+)
 from gui_fields import FieldsTab
 from gui_reactions import ReactionsTab
 from gui_results import ResultsTab
@@ -191,6 +198,7 @@ class SimGUI(tk.Tk):
         self.geometry("1000x760")
         self.minsize(860, 640)
         self.cfg = load_config(self._active_config_path)
+        self._sync_project_folder(default_to_active=True)
         self._apply_theme()
         self._build_statusbar()
         self._build_ui()
@@ -387,6 +395,22 @@ class SimGUI(tk.Tk):
         self._active_config_path = os.path.abspath(path)
         self.var_config_file.set(self._active_config_path)
 
+    def _sync_project_folder(self, default_to_active=False):
+        """Update global project-folder resolver from current cfg/active config."""
+        project_folder = (self.cfg.get("PROJECT_FOLDER") if isinstance(self.cfg, dict) else None) or ""
+        if hasattr(self, "var_project_folder"):
+            widget_value = self.var_project_folder.get().strip()
+            if widget_value:
+                project_folder = widget_value
+        project_folder = project_folder.strip() if isinstance(project_folder, str) else ""
+        if not project_folder and default_to_active:
+            project_folder = os.path.dirname(self._active_config_path)
+            self.cfg["PROJECT_FOLDER"] = project_folder
+        elif project_folder and not os.path.isabs(project_folder):
+            # Relative PROJECT_FOLDER is interpreted from the active config location.
+            project_folder = os.path.abspath(os.path.join(os.path.dirname(self._active_config_path), project_folder))
+        _set_project_folder(project_folder or os.path.dirname(self._active_config_path))
+
     def _browse_active_config(self):
         path = filedialog.askopenfilename(
             initialdir=os.path.dirname(self._active_config_path),
@@ -550,8 +574,9 @@ class SimGUI(tk.Tk):
 
         _on_mode_change()  # apply initial state
 
-        # --- Engine card ---
-        card = self._make_card(outer, "Engine Settings", pady=(12, 10))
+        # --- Project card ---
+        card = self._make_card(outer, "Project Settings", pady=(12, 10))
+        card.master.pack_configure(before=method_card.master)
 
         row = 0
         ttk.Label(card, text="CPU cores (-1 = all):", style="Card.TLabel").grid(
@@ -559,6 +584,21 @@ class SimGUI(tk.Tk):
         self.var_cpu = tk.IntVar(value=self.cfg.get("NUM_CPU_CORES", 1))
         ttk.Spinbox(card, from_=-1, to=256, textvariable=self.var_cpu,
                      width=8).grid(row=row, column=1, sticky="w", padx=(8, 0))
+
+        row += 1
+        ttk.Label(card, text="Project folder (if blank resolves to the .json file folder):", style="Card.TLabel").grid(
+            row=row, column=0, sticky="w", pady=5)
+        self.var_project_folder = tk.StringVar(value=self.cfg.get("PROJECT_FOLDER", os.path.dirname(self._active_config_path)))
+        ttk.Entry(card, textvariable=self.var_project_folder, width=30).grid(
+            row=row, column=1, sticky="we", padx=(8, 4))
+
+        def _on_project_folder_change(*_):
+            self.cfg["PROJECT_FOLDER"] = self.var_project_folder.get().strip()
+            self._sync_project_folder(default_to_active=True)
+
+        self.var_project_folder.trace_add("write", _on_project_folder_change)
+        ttk.Button(card, text="Browse…", style="Secondary.TButton",
+                    command=self._browse_project_folder).grid(row=row, column=2)
 
         row += 1
         ttk.Label(card, text="Geometry cache dir:", style="Card.TLabel").grid(
@@ -599,6 +639,16 @@ class SimGUI(tk.Tk):
                                        filetypes=ftypes)
         if p:
             self.var_pv_path.set(p)
+
+    def _browse_project_folder(self):
+        initial = _get_project_folder()
+        p = filedialog.askdirectory(
+            title="Select project folder",
+            initialdir=initial)
+        if p:
+            self.var_project_folder.set(_to_relative_path(p, os.path.dirname(self._active_config_path)))
+            self.cfg["PROJECT_FOLDER"] = self.var_project_folder.get().strip()
+            self._sync_project_folder(default_to_active=True)
 
     # ------------------------------------------------------------------
     #  GEOMETRY tab (delegated to gui_geometry.py)
@@ -700,27 +750,27 @@ class SimGUI(tk.Tk):
 
     def _view_geometry_o3d(self):
         src_dir = self.var_src_dir.get()
-        viewer.view_geometry(self, _SCRIPT_DIR,
+        viewer.view_geometry(self, _get_project_folder(),
                              self.cfg.get("GEOMETRY_FOLDERS", {}),
                              source_dir=src_dir)
 
     def _view_results_o3d(self):
         outdir = self.var_outdir.get()
         src_dir = self.var_src_dir.get()
-        viewer.view_results(self, _SCRIPT_DIR, outdir,
+        viewer.view_results(self, _get_project_folder(), outdir,
                             geometry_folders=self.cfg.get("GEOMETRY_FOLDERS", {}),
                             source_dir=src_dir)
 
     def _view_all_o3d(self):
         outdir = self.var_outdir.get()
         src_dir = self.var_src_dir.get()
-        viewer.view_all(self, _SCRIPT_DIR, outdir,
+        viewer.view_all(self, _get_project_folder(), outdir,
                         self.cfg.get("GEOMETRY_FOLDERS", {}),
                         source_dir=src_dir)
 
     def _view_sources_o3d(self):
         src_dir = self.var_src_dir.get()
-        viewer.view_sources(self, _SCRIPT_DIR, src_dir,
+        viewer.view_sources(self, _get_project_folder(), src_dir,
                             geometry_folders=self.cfg.get("GEOMETRY_FOLDERS", {}))
 
     # ------------------------------------------------------------------
@@ -767,8 +817,11 @@ class SimGUI(tk.Tk):
         try:
             path = os.path.abspath(path)
             new_cfg = load_config(path)
+            if not str(new_cfg.get("PROJECT_FOLDER", "")).strip():
+                new_cfg["PROJECT_FOLDER"] = os.path.dirname(path)
             self.cfg = new_cfg
             self._set_active_config_path(path)
+            self._sync_project_folder(default_to_active=True)
             self._refresh_all_from_cfg()
             self._log(f"✔ Configuration loaded from {os.path.basename(path)}\n")
             self._set_status(f"Loaded config: {os.path.basename(path)}")
@@ -802,6 +855,8 @@ class SimGUI(tk.Tk):
         self._fields_tab.collect(d)
         # Reaction model — delegate to ReactionsTab
         self._reactions_tab.collect(d, is_em and self.var_reactions_enabled.get())
+        project_folder = self.var_project_folder.get().strip() or os.path.dirname(self._active_config_path)
+        d["PROJECT_FOLDER"] = project_folder
         d["NUM_CPU_CORES"] = self.var_cpu.get()
         d["GEOMETRY_CACHE_DIR"] = self.var_cache.get()
         d["PARAVIEW_PATH"] = self.var_pv_path.get()
@@ -819,6 +874,7 @@ class SimGUI(tk.Tk):
     def _save(self):
         try:
             self.cfg = self._collect()
+            self._sync_project_folder(default_to_active=True)
             self._sync_cfg_to_tabs()
             save_config(self.cfg, self._active_config_path)
             self._log(f"✔ Configuration saved to {os.path.basename(self._active_config_path)}\n")
@@ -839,8 +895,11 @@ class SimGUI(tk.Tk):
             self.cfg = self._collect()
             self._sync_cfg_to_tabs()
             path = os.path.abspath(path)
+            if not str(self.cfg.get("PROJECT_FOLDER", "")).strip():
+                self.cfg["PROJECT_FOLDER"] = os.path.dirname(path)
             save_config(self.cfg, path)
             self._set_active_config_path(path)
+            self._sync_project_folder(default_to_active=True)
             self._log(f"✔ Configuration saved to {os.path.basename(path)}\n")
         except Exception as e:
             messagebox.showerror("Save Error", str(e))
@@ -865,10 +924,12 @@ class SimGUI(tk.Tk):
         reactions_on = rm.get("type", "none") not in ("none", "off", "null")
         self.var_reactions_enabled.set(reactions_on and raw_mode == "em_track_then_bvh")
         # General — engine
+        self.var_project_folder.set(c.get("PROJECT_FOLDER", os.path.dirname(self._active_config_path)))
         self.var_cpu.set(c.get("NUM_CPU_CORES", 1))
         self.var_cache.set(c.get("GEOMETRY_CACHE_DIR", "geometry_cache"))
         self.var_pv_path.set(c.get("PARAVIEW_PATH", "paraview"))
         self.var_pv_module.set(c.get("PARAVIEW_MODULE", "ParaView"))
+        self._sync_project_folder(default_to_active=True)
         # Geometry / Particles / Output — delegated
         self._geometry_tab.refresh(c)
         self._particles_tab.refresh(c)

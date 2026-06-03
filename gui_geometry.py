@@ -12,7 +12,12 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.patches import Rectangle
 
-from gui_widgets import make_card, _SCRIPT_DIR, resolve_path as _resolve_path
+from gui_widgets import (
+    make_card,
+    get_project_folder as _get_project_folder,
+    to_relative_path as _to_relative_path,
+    resolve_path as _resolve_path,
+)
 
 
 class GeometryTab(ttk.Frame):
@@ -146,16 +151,14 @@ class GeometryTab(ttk.Frame):
         e.pack(side="left", fill="x", expand=True)
 
         def _browse_geo_folder():
+            base_dir = _get_project_folder()
             d = filedialog.askdirectory(
-                initialdir=_SCRIPT_DIR,
+                initialdir=base_dir,
                 title="Select geometry folder",
                 parent=dlg,
             )
             if d:
-                try:
-                    rel = os.path.relpath(d, _SCRIPT_DIR)
-                except ValueError:
-                    rel = d  # different drive on Windows
+                rel = _to_relative_path(d, base_dir)
                 if existing_folder:
                     e.config(state="normal")
                 v_folder.set(rel)
