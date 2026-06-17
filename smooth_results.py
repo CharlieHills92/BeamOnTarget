@@ -25,6 +25,43 @@ import argparse
 
 import config
 
+
+def _build_noop_stats(mesh, deposited_power, areas, smoothed_density, radius, max_cell_area, elapsed_s, species_stats=None):
+    species_stats = species_stats or {}
+    return {
+        "n_cells": mesh.n_cells,
+        "n_smoothed": 0,
+        "radius": radius,
+        "max_cell_area": max_cell_area,
+        "elapsed_s": round(elapsed_s, 2),
+        "total_power_W": float(np.sum(deposited_power)),
+        "peak_density_before": float(smoothed_density.max()) if smoothed_density.size else 0.0,
+        "peak_density_after": float(smoothed_density.max()) if smoothed_density.size else 0.0,
+        "min_area_m2": float(areas.min()) if areas.size else 0.0,
+        "max_area_m2": float(areas.max()) if areas.size else 0.0,
+        "species": species_stats,
+    }
+
+
+def _populate_species_density_noop(mesh, areas):
+    species_stats = {}
+    n_cells = mesh.n_cells
+    for key in list(mesh.cell_data.keys()):
+        if key.startswith('Deposited_Power_W_') and key != 'Deposited_Power_W':
+            suffix = key[len('Deposited_Power_W_'):]
+            sp_power = np.array(mesh.cell_data[key], dtype=np.float64)
+            density_key = f'Power_Density_W_m2_{suffix}'
+            sp_density = np.zeros(n_cells, dtype=np.float64)
+            np.divide(sp_power, areas, out=sp_density, where=areas > 0)
+            mesh.cell_data[density_key] = sp_density
+            peak_density = float(sp_density.max()) if sp_density.size else 0.0
+            species_stats[suffix] = {
+                "total_power_W": float(np.sum(sp_power)),
+                "peak_density_before": peak_density,
+                "peak_density_after": peak_density,
+            }
+    return species_stats
+
 # --- Core reusable function ---
 def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None, normal_threshold_deg=7.0):
     """
@@ -70,8 +107,21 @@ def apply_smoothing(mesh, radius=None, n_iter=None, max_cell_area=None, normal_t
     n_small = len(small_indices)
 
     if n_small == 0:
-        print("  - No cells found matching smoothing criteria.")
-        return mesh, None
+        mesh.cell_data['Power_Density_W_m2'] = smoothed_density
+        species_stats = _populate_species_density_noop(mesh, areas)
+        mesh.cell_data.active_scalars_name = 'Power_Density_W_m2'
+        elapsed = time.time() - t0
+        print("  - No cells found matching smoothing criteria; preserving original values.")
+        return mesh, _build_noop_stats(
+            mesh,
+            deposited_power,
+            areas,
+            smoothed_density,
+            radius,
+            max_cell_area,
+            elapsed,
+            species_stats=species_stats,
+        )
 
     # --- Spatial Query ---
     tree = cKDTree(centroids)
