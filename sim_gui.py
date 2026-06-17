@@ -19,9 +19,9 @@ import matplotlib
 matplotlib.use("Agg")  # non-interactive backend; sub-tabs import their own
 from PIL import Image, ImageTk
 
-import viewer  # built-in Open3D viewer
+from gui import viewer  # built-in Open3D viewer
 from config import load_config, save_config
-from gui_widgets import (
+from gui.gui_widgets import (
     make_card,
     parse_vec3,
     resolve_path as _resolve_path,
@@ -29,13 +29,13 @@ from gui_widgets import (
     get_project_folder as _get_project_folder,
     to_relative_path as _to_relative_path,
 )
-from gui_fields import FieldsTab
-from gui_reactions import ReactionsTab
-from gui_results import ResultsTab
-from gui_geometry import GeometryTab
-from gui_particles import ParticlesTab
-from gui_output import OutputTab
-from gui_run import RunTab
+from gui.gui_fields import FieldsTab
+from gui.gui_reactions import ReactionsTab
+from gui.gui_results import ResultsTab
+from gui.gui_geometry import GeometryTab
+from gui.gui_particles import ParticlesTab
+from gui.gui_output import OutputTab
+from gui.gui_run import RunTab
 
 # ---------------------------------------------------------------------------
 # Resolve paths  (canonical copies live in gui_widgets; keep local for
@@ -44,9 +44,9 @@ from gui_run import RunTab
 _IS_FROZEN = getattr(sys, 'frozen', False)  # True when running from PyInstaller exe
 _SCRIPT_DIR = (os.path.dirname(sys.executable) if _IS_FROZEN
                else os.path.dirname(os.path.abspath(__file__)))
-_CONFIG_JSON = os.path.join(_SCRIPT_DIR, "config.json")
+_CONFIG_JSON = os.path.join(_SCRIPT_DIR, "config", "config.json")
 _RUN_SIMULATION = os.path.join(_SCRIPT_DIR, "run_simulation.py")
-_RUN_SMOOTHING = os.path.join(_SCRIPT_DIR, "smooth_results.py")
+_RUN_SMOOTHING = os.path.join(_SCRIPT_DIR, "postprocessing", "smooth_results.py")
 _PYTHON = sys.executable  # the same Python that launched the GUI
 _SPLASH_LOGO = os.path.join(_SCRIPT_DIR, "BOT_logo.png")
 _APP_ICON_BMP = os.path.join(_SCRIPT_DIR, "BOT_icon.bmp")

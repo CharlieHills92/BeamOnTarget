@@ -11,7 +11,7 @@ import os, sys
 # ---------------------------------------------------------------------------
 _IS_FROZEN = getattr(sys, 'frozen', False)
 _SCRIPT_DIR = (os.path.dirname(sys.executable) if _IS_FROZEN
-               else os.path.dirname(os.path.abspath(__file__)))
+               else os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _PROJECT_FOLDER = _SCRIPT_DIR
 
 

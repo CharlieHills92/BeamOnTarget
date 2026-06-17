@@ -27,9 +27,16 @@ import os
 import glob
 import argparse
 
+import sys
+# Ensure the project root is importable when this file is run as a standalone script
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
 import config
-import batch_smoother
-import generate_report
+from postprocessing import batch_smoother
+from postprocessing import generate_report
 
 
 def find_subdirs_with_results(parent_dir):

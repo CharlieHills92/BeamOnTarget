@@ -19,7 +19,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-from gui_widgets import make_card, resolve_path
+from gui.gui_widgets import make_card, resolve_path
 
 # ---------------------------------------------------------------------------
 #  ResultsTab

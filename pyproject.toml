@@ -30,30 +30,12 @@ dependencies = [
 beamontarget = "sim_gui:main"
 
 [tool.setuptools]
-py-modules = [
-    "sim_gui",
-    "viewer",
-    "config",
-    "engine",
-    "em_tracker_v2",
-    "field_provider",
-    "geometry",
-    "output",
-    "particles",
-    "reactions",
-    "run_simulation",
-    "smooth_results",
-    "species",
-    "trajectory_intersector",
-    "batch_smoother",
-    "extract_mesh_data",
-    "post_smooth",
-    "generate_report",
-]
+packages = ["config", "core", "simulation", "gui", "postprocessing"]
+py-modules = ["sim_gui", "run_simulation"]
 
 [tool.setuptools.package-data]
+"config" = ["config.json"]
 "*" = [
-    "*.json",
     "BEAM_CONFIGS/*.bl",
     "CAL/*.stl",
     "NEU/*.stl",

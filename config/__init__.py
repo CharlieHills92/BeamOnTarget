@@ -19,6 +19,9 @@ import numpy as np
 # ---------------------------------------------------------------------------
 _CONFIG_DIR = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
                else os.path.dirname(os.path.abspath(__file__)))
+# Project root is one level above the config/ package directory
+_PROJECT_ROOT = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
+                 else os.path.dirname(_CONFIG_DIR))
 _CONFIG_FILE = os.path.join(_CONFIG_DIR, "config.json")
 
 # ---------------------------------------------------------------------------
@@ -103,7 +106,7 @@ def _apply(d):
     """Set module globals from a config dict."""
     g = globals()
 
-    g["PROJECT_FOLDER"]            = d.get("PROJECT_FOLDER", _CONFIG_DIR)
+    g["PROJECT_FOLDER"]            = d.get("PROJECT_FOLDER", _PROJECT_ROOT)
     g["NUM_CPU_CORES"]              = d.get("NUM_CPU_CORES", 1)
     g["ENABLE_DIAGNOSTIC_SURFACES"] = d.get("ENABLE_DIAGNOSTIC_SURFACES", False)
     g["GEOMETRY_CACHE_DIR"]         = d.get("GEOMETRY_CACHE_DIR", "geometry_cache")

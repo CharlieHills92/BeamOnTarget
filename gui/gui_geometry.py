@@ -12,7 +12,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.patches import Rectangle
 
-from gui_widgets import (
+from gui.gui_widgets import (
     make_card,
     get_project_folder as _get_project_folder,
     to_relative_path as _to_relative_path,

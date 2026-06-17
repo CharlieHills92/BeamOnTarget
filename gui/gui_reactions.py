@@ -18,7 +18,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
-from gui_widgets import make_card, parse_vec3, _SCRIPT_DIR
+from gui.gui_widgets import make_card, parse_vec3, _SCRIPT_DIR
 
 # ---------------------------------------------------------------------------
 #  ReactionsTab

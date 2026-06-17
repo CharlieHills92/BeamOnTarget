@@ -2,8 +2,8 @@
 
 import os
 import numpy as np
-from constants import ELEMENTARY_CHARGE_C, HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG
-import cross_sections
+from core.constants import ELEMENTARY_CHARGE_C, HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG
+from core import cross_sections
 from scipy.interpolate import interp1d
 
 

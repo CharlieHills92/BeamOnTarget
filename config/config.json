@@ -3,7 +3,7 @@
     "ENABLE_DIAGNOSTIC_SURFACES": false,
     "GEOMETRY_CACHE_DIR": "geometry_cache",
     "GEOMETRY_FOLDERS": {
-        "NEU": {
+        "..\\3D_MODELS\\CAL": {
             "scale": 1.0,
             "target_length": 1.0,
             "save_details": true,
@@ -12,7 +12,7 @@
             "show_in_plot": false,
             "max_impact_records": null
         },
-        "RID": {
+        "..\\3D_MODELS\\NEU": {
             "scale": 1.0,
             "target_length": 1.0,
             "save_details": true,
@@ -21,7 +21,7 @@
             "show_in_plot": false,
             "max_impact_records": null
         },
-        "CAL": {
+        "..\\3D_MODELS\\RID": {
             "scale": 1.0,
             "target_length": 1.0,
             "save_details": true,
@@ -31,7 +31,7 @@
             "max_impact_records": null
         }
     },
-    "PARTICLE_SOURCE_DIR": "BEAM_CONFIGS",
+    "PARTICLE_SOURCE_DIR": "..\\BEAM_CONFIGS\\DNB",
     "NUM_PARTICLES_PER_BEAMLET": 1001,
     "BEAMLET_RADIUS_M": 0.007,
     "SOURCES_PER_WORKER": null,
@@ -74,7 +74,7 @@
     },
     "DEPOSITION_FRACTION": 1.0,
     "SAVE_PARAVIEW_FILES": true,
-    "DETAILED_OUTPUT_DIR": "OUTPUT",
+    "DETAILED_OUTPUT_DIR": "..\\OUTPUT",
     "ENABLE_VISUALIZATION": true,
     "SAVE_BINARY_POWERLOADS": false,
     "SAVE_CSV_REPORTS": false,
@@ -85,7 +85,8 @@
     "RUN_SMOOTHER_AFTER_SIM": false,
     "SMOOTHING_RADIUS": 0.02,
     "SMOOTHING_MAX_CELL_AREA": 4e-06,
-    "SMOOTHING_NORMAL_THRESHOLD_DEG": 6.0,
-    "PARAVIEW_PATH": "/work/imas/opt/EasyBuild/software/ParaView/5.12.0-intel-2023b/bin/paraview",
-    "PARAVIEW_MODULE": "ParaView"
+    "SMOOTHING_NORMAL_THRESHOLD_DEG": 7.0,
+    "PARAVIEW_PATH": "C:/users/attelnd/Work Folders/Desktop/ParaView-6.1.0-Windows-Python3.12-msvc2017-AMD64/bin/paraview.exe",
+    "PARAVIEW_MODULE": "ParaView",
+    "PROJECT_FOLDER": "D:\\attelnd\\Beam_on_target\\BeamOnTarget_experimental\\config"
 }

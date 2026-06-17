@@ -16,13 +16,13 @@ import numpy as np
 import os
 import glob
 import config
-import geometry
-import particles
-import engine
-import output
-from prerun_analysis import run_em_prerun_analysis
-import batch_smoother # <-- NEW: Import the batch smoother script
-import generate_report
+from simulation import geometry
+from simulation import particles
+from simulation import engine
+from simulation import output
+from simulation.prerun_analysis import run_em_prerun_analysis
+from postprocessing import batch_smoother
+from postprocessing import generate_report
 
 
 def _resolve_config_relative_paths(config_path):

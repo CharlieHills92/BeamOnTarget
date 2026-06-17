@@ -11,10 +11,10 @@ import math
 import time
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from field_provider import create_field_provider
-from reactions import create_reaction_model
-from em_tracker_v2 import trace_particle_batch_em_only
-from trajectory_intersector import intersect_trajectory_segments_bvh
+from core.field_provider import create_field_provider
+from core.reactions import create_reaction_model
+from core.em_tracker_v2 import trace_particle_batch_em_only
+from core.trajectory_intersector import intersect_trajectory_segments_bvh
 
 def _empty_particle_batch():
     return {

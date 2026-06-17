@@ -14,7 +14,7 @@ from tqdm import tqdm
 import argparse
 
 # Import the core smoothing function from our library file
-from smooth_results import apply_smoothing
+from postprocessing.smooth_results import apply_smoothing
 
 # --- CONFIGURATION PANEL ---
 # This now acts as the DEFAULT input directory if none is provided via command line.

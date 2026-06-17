@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 import threading
 
-from gui_widgets import make_card, _SCRIPT_DIR
+from gui.gui_widgets import make_card, _SCRIPT_DIR
 
 # ---------------------------------------------------------------------------
 #  Module-level constants (mirrors sim_gui.py)
@@ -16,7 +16,7 @@ from gui_widgets import make_card, _SCRIPT_DIR
 _IS_FROZEN = getattr(sys, 'frozen', False)
 _PYTHON = sys.executable
 _RUN_SIMULATION = os.path.join(_SCRIPT_DIR, "run_simulation.py")
-_RUN_SMOOTHING = os.path.join(_SCRIPT_DIR, "smooth_results.py")
+_RUN_SMOOTHING = os.path.join(_SCRIPT_DIR, "postprocessing", "smooth_results.py")
 
 
 def _run_module_frozen(module_name, argv=None, log_fn=None):

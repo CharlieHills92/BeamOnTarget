@@ -15,10 +15,17 @@ over the cell itself and all its neighbours within the radius.  This approach
 is physically consistent: it preserves the total deposited power and computes
 a meaningful averaged power density.
 """
+import sys
+import os
+# Ensure the project root is importable when this file is run as a standalone script
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
 import pyvista as pv
 import numpy as np
 from scipy.spatial import cKDTree
-import os
 import time
 import glob
 import argparse

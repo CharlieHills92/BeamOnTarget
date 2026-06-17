@@ -1640,7 +1640,7 @@ if __name__ == "__main__":
     import json
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    cfg_path = os.path.join(script_dir, "config.json")
+    cfg_path = os.path.join(os.path.dirname(script_dir), "config", "config.json")
     with open(cfg_path) as f:
         cfg = json.load(f)
 
