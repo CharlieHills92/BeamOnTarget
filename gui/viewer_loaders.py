@@ -17,6 +17,7 @@ import numpy as np
 import open3d as o3d
 import pyvista as pv
 import pandas as pd
+import trimesh as _trimesh
 
 from gui.viewer_widget import _apply_jet_colormap
 
@@ -38,13 +39,128 @@ _FOLDER_COLORS = [
 #  Mesh loading helpers
 # ===================================================================
 
-def _load_stl(stl_path, scale, color):
-    """Read an STL, optionally scale, paint uniform colour."""
-    mesh = o3d.io.read_triangle_mesh(stl_path)
+# Directory used to cache pre-decimated viewer meshes.  Set at startup by
+# _load_selected_geometry from the geometry-folder settings.
+_VIEWER_CACHE_DIR = None
+
+
+def _lod_cache_path(stl_path, max_faces, scale):
+    """Return the path of the cached LOD file for *stl_path*."""
+    global _VIEWER_CACHE_DIR
+    if not _VIEWER_CACHE_DIR:
+        return None
+    stem = os.path.splitext(os.path.basename(stl_path))[0]
+    # Encode scale in the filename so a different scale gets its own cache
+    scale_tag = f"_s{scale:.4g}".replace(".", "p") if scale != 1 else ""
+    cache_name = f"{stem}_lod{max_faces}{scale_tag}.stl"
+    return os.path.join(_VIEWER_CACHE_DIR, cache_name)
+
+
+def _voxel_decimate(verts, faces, target_faces):
+    """Fast numpy voxel-grid mesh decimation.
+
+    Clusters vertices into a regular voxel grid and reindexes faces.
+    Much faster than Open3D\'s vertex_clustering for very large meshes
+    (handles 26M faces in ~20s vs 60s).
+
+    Returns (new_verts, new_faces) as float64 / int32 arrays.
+    """
+    origin = verts.min(axis=0)
+    extent = float(np.linalg.norm(verts.max(axis=0) - origin))
+    if extent == 0:
+        return verts, faces
+    voxel_size = extent / (max(target_faces, 1) ** 0.5) * 1.5
+
+    # Map each vertex to a voxel index encoded as a single int64
+    vi = np.floor((verts - origin) / voxel_size).astype(np.int64)
+    dims = vi.max(axis=0) + 2
+    voxel_id = (vi[:, 0] * dims[1] + vi[:, 1]) * dims[2] + vi[:, 2]
+
+    # Sort voxel IDs to group vertices; build inverse mapping via cumsum
+    sort_idx = np.argsort(voxel_id, kind='stable')
+    vs = voxel_id[sort_idx]
+    changes = np.empty(len(vs), dtype=bool)
+    changes[0] = True
+    changes[1:] = vs[1:] != vs[:-1]
+    cid = np.cumsum(changes) - 1
+    inv = np.empty_like(cid, dtype=np.int32)
+    inv[sort_idx] = cid
+    n = int(cid[-1]) + 1
+
+    # Compute centroid per voxel cluster
+    counts = np.bincount(inv, minlength=n).astype(np.float64)
+    nx = np.bincount(inv, weights=verts[:, 0], minlength=n) / counts
+    ny = np.bincount(inv, weights=verts[:, 1], minlength=n) / counts
+    nz = np.bincount(inv, weights=verts[:, 2], minlength=n) / counts
+    new_verts = np.column_stack([nx, ny, nz])
+
+    # Remap faces and discard degenerate triangles
+    nf = inv[faces]
+    valid = (nf[:, 0] != nf[:, 1]) & (nf[:, 1] != nf[:, 2]) & (nf[:, 0] != nf[:, 2])
+    return new_verts, nf[valid].astype(np.int32)
+
+
+def _load_stl(stl_path, scale, color, viewer_max_faces=None):
+    """Read an STL, optionally scale, decimate for viewer speed, paint colour.
+
+    Uses trimesh for fast binary STL reading (~30x faster than Open3D on
+    large files), then applies voxel-grid decimation if needed.  Decimated
+    meshes are cached to disk so subsequent opens are near-instant.
+
+    Args:
+        stl_path: path to the .stl file.
+        scale: uniform scale factor.
+        color: RGB tuple for uniform colouring.
+        viewer_max_faces: target face count for LOD decimation.  The cached
+            result is reused on all subsequent opens.
+    """
+    cache_file = _lod_cache_path(stl_path, viewer_max_faces, scale) if viewer_max_faces else None
+
+    if cache_file and os.path.isfile(cache_file):
+        # Fast path: small pre-decimated cache file
+        mesh = o3d.io.read_triangle_mesh(cache_file)
+        if not mesh.is_empty():
+            mesh.compute_vertex_normals()
+            mesh.paint_uniform_color(color)
+            return mesh
+
+    # Load with trimesh — fast binary STL reader
+    try:
+        tm = _trimesh.load(stl_path, process=False)
+        verts = np.asarray(tm.vertices, dtype=np.float64)
+        faces = np.asarray(tm.faces, dtype=np.int32)
+    except Exception:
+        # Fallback to Open3D reader
+        mesh = o3d.io.read_triangle_mesh(stl_path)
+        if mesh.is_empty():
+            return None
+        verts = np.asarray(mesh.vertices)
+        faces = np.asarray(mesh.triangles)
+
+    if scale != 1:
+        verts = verts * scale
+
+    needs_decimate = viewer_max_faces and len(faces) > viewer_max_faces
+    if needs_decimate:
+        verts, faces = _voxel_decimate(verts, faces, viewer_max_faces)
+
+    # Build Open3D mesh from numpy arrays
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(verts)
+    mesh.triangles = o3d.utility.Vector3iVector(faces)
     if mesh.is_empty():
         return None
-    if scale != 1:
-        mesh.scale(scale, center=(0, 0, 0))
+
+    # Save decimated LOD to disk for next open
+    if needs_decimate and cache_file:
+        try:
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            # Use trimesh to write — handles normals automatically
+            tm_out = _trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+            tm_out.export(cache_file)
+        except Exception:
+            pass  # Cache write failure is non-fatal
+
     mesh.compute_vertex_normals()
     mesh.paint_uniform_color(color)
     return mesh
@@ -149,7 +265,18 @@ def _scan_vtp_vmax(vtp_paths):
 # ===================================================================
 
 def _load_selected_geometry(script_dir, geometry_folders, selected_folders):
-    """Load STL meshes for *selected_folders*."""
+    """Load STL meshes for *selected_folders*.
+
+    Respects ``viewer_max_faces`` from each folder's settings to keep the
+    viewer fast on high-polygon meshes.  Decimated meshes are cached on disk
+    in the viewer LOD cache directory (``geometry_cache/viewer_lod`` by
+    default) so only the very first open is slow.
+    """
+    global _VIEWER_CACHE_DIR
+    # Use a fixed viewer LOD cache directory next to the script
+    if _VIEWER_CACHE_DIR is None:
+        _VIEWER_CACHE_DIR = os.path.join(script_dir, "config", "geometry_cache", "viewer_lod")
+
     meshes = []
     ci = 0
     for folder in geometry_folders:
@@ -159,6 +286,8 @@ def _load_selected_geometry(script_dir, geometry_folders, selected_folders):
             continue
         settings = geometry_folders[folder]
         scale = settings.get("scale", 1)
+        max_faces_raw = settings.get("viewer_max_faces", 50_000)
+        max_faces = int(max_faces_raw) if max_faces_raw else None
         folder_abs = _resolve_viewer_path(script_dir, folder)
         if not os.path.isdir(folder_abs):
             continue
@@ -166,7 +295,7 @@ def _load_selected_geometry(script_dir, geometry_folders, selected_folders):
             glob.glob(os.path.join(folder_abs, "*.stl"))
             + glob.glob(os.path.join(folder_abs, "*.STL"))
         ):
-            mesh = _load_stl(stl_path, scale, color)
+            mesh = _load_stl(stl_path, scale, color, viewer_max_faces=max_faces)
             if mesh is not None:
                 meshes.append(mesh)
     return meshes
@@ -213,8 +342,28 @@ def _load_bl_file(bl_path):
     return df
 
 
+def _apply_transform_to_df(df, translation_m, rotation_z_deg):
+    """Apply Rz(theta) rotation + translation to positions and directions in *df*.
+
+    Modifies CenterX/Y/Z and DirX/Y/Z columns in-place to convert from
+    beam-local coordinates to the Tokamak global frame.
+    """
+    t = np.asarray(translation_m, dtype=np.float64)
+    theta = np.deg2rad(rotation_z_deg)
+    c, s = np.cos(theta), np.sin(theta)
+    Rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+    pos = df[['CenterX', 'CenterY', 'CenterZ']].to_numpy(dtype=np.float64)
+    dirs = df[['DirX', 'DirY', 'DirZ']].to_numpy(dtype=np.float64)
+
+    df[['CenterX', 'CenterY', 'CenterZ']] = pos @ Rz.T + t
+    dir_rot = dirs @ Rz.T
+    norms = np.linalg.norm(dir_rot, axis=1, keepdims=True)
+    df[['DirX', 'DirY', 'DirZ']] = np.where(norms > 0, dir_rot / norms, dir_rot)
+
+
 def _build_source_geometries(bl_paths, arrow_length=0.0,
-                              show_direction=False):
+                              show_direction=False, transforms=None):
     """Build Open3D geometries for particle sources.
 
     Source positions are rendered as a **PointCloud** (zero triangle
@@ -223,6 +372,15 @@ def _build_source_geometries(bl_paths, arrow_length=0.0,
     source).
 
     Each source is coloured by its ``CurrentDensity_A_m2``.
+
+    Args:
+        bl_paths: list of .bl file paths.
+        arrow_length: override arrow length in metres (0 = auto).
+        show_direction: whether to render direction arrows.
+        transforms: optional dict ``{bl_abs_path: {"translation_m": [...],
+            "rotation_z_deg": float}}`` used to convert each file's
+            beamlet positions/directions from beam-local coordinates to
+            the Tokamak global frame before rendering.
 
     Returns
     -------
@@ -235,8 +393,16 @@ def _build_source_geometries(bl_paths, arrow_length=0.0,
     dfs = []
     for bl in bl_paths:
         df = _load_bl_file(bl)
-        if df is not None and not df.empty:
-            dfs.append(df)
+        if df is None or df.empty:
+            continue
+        # Apply per-file coordinate transform if provided
+        if transforms and bl in transforms:
+            t_cfg = transforms[bl]
+            t = t_cfg.get("translation_m", [0.0, 0.0, 0.0])
+            r = t_cfg.get("rotation_z_deg", 0.0)
+            if any(v != 0.0 for v in t) or r != 0.0:
+                _apply_transform_to_df(df, t, r)
+        dfs.append(df)
 
     if not dfs:
         return [], 0.0

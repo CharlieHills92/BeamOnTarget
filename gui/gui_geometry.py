@@ -40,16 +40,18 @@ class GeometryTab(ttk.Frame):
 
         # Treeview
         cols = ("folder", "scale", "target_length", "save_details",
-                "is_diagnostic", "save_impact_data", "max_impact_records")
+                "is_diagnostic", "save_impact_data", "max_impact_records", "viewer_max_faces")
         tree_frame = ttk.Frame(card, style="Card.TFrame")
         tree_frame.pack(fill="both", expand=True)
 
         self.geo_tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=8)
         headers = {"folder": "Folder", "scale": "Scale", "target_length": "Target Len",
                    "save_details": "Details", "is_diagnostic": "Diagnostic",
-                   "save_impact_data": "Impacts", "max_impact_records": "Max Records"}
+                   "save_impact_data": "Impacts", "max_impact_records": "Max Records",
+                   "viewer_max_faces": "Viewer LOD"}
         widths = {"folder": 140, "scale": 60, "target_length": 90, "save_details": 65,
-                  "is_diagnostic": 80, "save_impact_data": 65, "max_impact_records": 100}
+                  "is_diagnostic": 80, "save_impact_data": 65, "max_impact_records": 100,
+                  "viewer_max_faces": 90}
         for c in cols:
             self.geo_tree.heading(c, text=headers[c])
             self.geo_tree.column(c, width=widths[c], anchor="center")
@@ -109,7 +111,8 @@ class GeometryTab(ttk.Frame):
                 folder, s.get("scale", 1), s.get("target_length", 1.0),
                 "✓" if s.get("save_details") else "", "✓" if s.get("is_diagnostic") else "",
                 "✓" if s.get("save_impact_data") else "",
-                s.get("max_impact_records") if s.get("max_impact_records") is not None else "—"))
+                s.get("max_impact_records") if s.get("max_impact_records") is not None else "—",
+                s.get("viewer_max_faces", 50000)))
 
     def _add_geo_folder(self):
         self._geo_dialog(None)
@@ -202,18 +205,28 @@ class GeometryTab(ttk.Frame):
         ttk.Entry(dlg, textvariable=v_mir, width=15).grid(row=row, column=1, sticky="w", padx=8)
         entries["max_impact_records"] = v_mir
 
+        row += 1
+        ttk.Label(dlg, text="Viewer max faces (LOD):").grid(row=row, column=0, sticky="w", padx=8, pady=4)
+        v_vmf = tk.StringVar(value=str(s.get("viewer_max_faces", 50000)))
+        ttk.Entry(dlg, textvariable=v_vmf, width=15).grid(row=row, column=1, sticky="w", padx=8)
+        ttk.Label(dlg, text="(0 = no limit)", foreground="grey").grid(
+            row=row, column=1, sticky="e", padx=8)
+        entries["viewer_max_faces"] = v_vmf
+
         def _ok():
             folder_name = entries["folder"].get().strip()
             if not folder_name:
                 messagebox.showwarning("Missing", "Folder path is required."); return
             new_s = {}
-            for key, (var, typ) in [(k, v) for k, v in entries.items() if k not in ("folder", "max_impact_records")]:
+            for key, (var, typ) in [(k, v) for k, v in entries.items() if k not in ("folder", "max_impact_records", "viewer_max_faces")]:
                 try:
                     new_s[key] = typ(var.get())
                 except (ValueError, tk.TclError):
                     new_s[key] = var.get()
             mir_val = entries["max_impact_records"].get().strip()
             new_s["max_impact_records"] = int(mir_val) if mir_val else None
+            vmf_val = entries["viewer_max_faces"].get().strip()
+            new_s["viewer_max_faces"] = int(vmf_val) if vmf_val else 50000
             if "GEOMETRY_FOLDERS" not in self.cfg:
                 self.cfg["GEOMETRY_FOLDERS"] = {}
             # If the folder was renamed via Browse, remove the old key

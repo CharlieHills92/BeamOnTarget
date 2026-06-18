@@ -103,7 +103,7 @@ class _MeshCache:
         return [m for m, _ in pairs], vmax_all
 
     # -- sources --
-    def get_sources(self, sel_bl, arrow_len, show_dir):
+    def get_sources(self, sel_bl, arrow_len, show_dir, transforms=None):
         """Return source geometries + vmax.
 
         The PointCloud (dots) is cached by file selection alone —
@@ -117,7 +117,8 @@ class _MeshCache:
         if files_key != self._src_files_key:
             # Need full rebuild (dots + arrows)
             all_geoms, vmax = _build_source_geometries(
-                sel_bl, arrow_length=arrow_len, show_direction=show_dir)
+                sel_bl, arrow_length=arrow_len, show_direction=show_dir,
+                transforms=transforms)
             # First element is always the PointCloud
             self._src_pc = all_geoms[0] if all_geoms else None
             self._src_vmax = vmax
@@ -132,7 +133,8 @@ class _MeshCache:
         if arrow_key != self._src_arrow_key:
             # Rebuild only arrows (dots will be identical, discard them)
             all_geoms, _ = _build_source_geometries(
-                sel_bl, arrow_length=arrow_len, show_direction=show_dir)
+                sel_bl, arrow_length=arrow_len, show_direction=show_dir,
+                transforms=transforms)
             self._src_arrow_key = arrow_key
             self._src_arrow_mesh = all_geoms[1] if len(all_geoms) > 1 else None
 
@@ -150,12 +152,52 @@ def _status_msg(parent, msg):
         parent._log(f"🔍 {msg}\n")
 
 
-def view_geometry(parent, script_dir, geometry_folders, source_dir=None):
-    """Geometry viewer — persistent selection dialog → Open3D window."""
-    src_abs = None
-    if source_dir:
+def view_geometry(parent, script_dir, geometry_folders, source_dir=None,
+                  beam_sources=None):
+    """Geometry viewer — persistent selection dialog → Open3D window.
+
+    When *beam_sources* is supplied (list of ``{label, directory, transform}``
+    dicts), all beam directories are listed in the Sources section and each
+    file's coordinate transform is applied so beamlets appear in the Tokamak
+    frame.  Falls back to *source_dir* when *beam_sources* is empty/None.
+    """
+    # Build a {abs_path -> transform_dict} map for every .bl file across all beams
+    transforms = {}
+    # List of (label, dir_abs) for populating the Sources section
+    source_dirs = []  # list of {"label": str, "dir_abs": str, "transform": dict|None}
+
+    if beam_sources:
+        for bs in beam_sources:
+            d = bs.get("directory", "")
+            # Use directory as-is if absolute; otherwise resolve via config subdir
+            if os.path.isabs(d):
+                d_abs = d
+            else:
+                d_abs = os.path.normpath(os.path.join(script_dir, "config", d))
+            if not os.path.isdir(d_abs):
+                continue
+            tfm = bs.get("transform", None)
+            source_dirs.append({
+                "label": bs.get("label", os.path.basename(d_abs)),
+                "dir_abs": d_abs,
+                "transform": tfm,
+            })
+            if tfm:
+                for bl in glob.glob(os.path.join(d_abs, "*.bl")):
+                    transforms[bl] = tfm
+
+    # Fall back to legacy single source_dir
+    if not source_dirs and source_dir:
         src_abs = (_resolve_viewer_path(script_dir, source_dir)
                    if not os.path.isabs(source_dir) else source_dir)
+        if os.path.isdir(src_abs):
+            source_dirs.append({"label": "Sources", "dir_abs": src_abs,
+                                 "transform": None})
+
+    # Single dir passed to _pick_items_dialog for its legacy source_dir slot
+    # (used to show the arrow-options row); use first dir if available
+    src_abs_compat = source_dirs[0]["dir_abs"] if source_dirs else None
+
     cache = _MeshCache(script_dir, geometry_folders)
 
     def _load_and_show(sel_geo, sel_res, sf, sel_bl, sd, al):
@@ -165,7 +207,8 @@ def view_geometry(parent, script_dir, geometry_folders, source_dir=None):
             res_meshes, vmax = cache.get_results(sel_res, sf)
             geoms += res_meshes
         if sel_bl:
-            src_geoms, _ = cache.get_sources(sel_bl, al, sd)
+            t = {k: v for k, v in transforms.items() if k in sel_bl} or None
+            src_geoms, _ = cache.get_sources(sel_bl, al, sd, transforms=t)
             geoms += src_geoms
         if not geoms:
             parent.after(0, lambda: _status_msg(parent, "No meshes found."))
@@ -178,7 +221,8 @@ def view_geometry(parent, script_dir, geometry_folders, source_dir=None):
         parent, geometry_folders, results_dir=None,
         geo_checked=False, res_checked=False,
         load_and_show_fn=_load_and_show,
-        source_dir=src_abs,
+        source_dir=None,
+        source_dirs=source_dirs,
     )
 
 
@@ -258,13 +302,18 @@ def view_all(parent, script_dir, output_dir, geometry_folders,
     )
 
 
-def view_sources(parent, script_dir, source_dir, geometry_folders=None):
+def view_sources(parent, script_dir, source_dir, geometry_folders=None,
+                 beam_sources=None):
     """Particle-source viewer — shows beamlet locations + optional arrows.
 
+    When *beam_sources* is provided (list of ``{label, directory, transform}``
+    dicts from config), all beams are shown together in the Tokamak frame
+    with each beam's coordinate transform applied automatically.
     Colour encodes current density (A/m²).
     """
     geometry_folders = geometry_folders or {}
-    _pick_sources_dialog(parent, script_dir, source_dir, geometry_folders)
+    _pick_sources_dialog(parent, script_dir, source_dir, geometry_folders,
+                         beam_sources=beam_sources)
 
 
 # ===================================================================

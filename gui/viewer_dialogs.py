@@ -22,9 +22,14 @@ from gui.viewer_loaders import (
 
 def _pick_items_dialog(parent, geometry_folders, results_dir,
                        geo_checked=True, res_checked=True,
-                       load_and_show_fn=None, source_dir=None):
+                       load_and_show_fn=None, source_dir=None,
+                       source_dirs=None):
     """Persistent selection dialog with geometry folders, result files,
     and optionally particle-source (.bl) files.
+
+    *source_dirs* overrides *source_dir* when provided: it is a list of
+    ``{label, dir_abs, transform}`` dicts (one per beam source) which are
+    shown as separate labelled sections in the Sources checkbox list.
 
     The dialog stays open so the user can change the selection and click
     **View** repeatedly.  Each click launches a new Open3D window via
@@ -68,11 +73,14 @@ def _pick_items_dialog(parent, geometry_folders, results_dir,
     ttk.Label(scale_frm, text="(e.g. 1e-6 for MW/m²)",
               foreground="grey", font=("", 9)).pack(side="left", padx=(6, 0))
 
-    # --- Source options row (only shown when source_dir is supplied) ---
+    # --- Source options row (shown when any source dirs are available) ---
     show_dir_var = tk.BooleanVar(value=True)
     arrow_len_var = tk.StringVar(value="0")
-    src_abs = source_dir  # already absolute when passed from entry points
-    if src_abs is not None and os.path.isdir(src_abs):
+    # Resolve effective source dirs: prefer source_dirs list, fall back to source_dir
+    _src_dirs = source_dirs or []
+    if not _src_dirs and source_dir and os.path.isdir(source_dir):
+        _src_dirs = [{"label": "Sources", "dir_abs": source_dir, "transform": None}]
+    if _src_dirs:
         src_opts_frm = ttk.Frame(bottom_frm)
         src_opts_frm.pack(fill="x", pady=(4, 0))
         ttk.Checkbutton(src_opts_frm, text="Plot source direction",
@@ -188,19 +196,30 @@ def _pick_items_dialog(parent, geometry_folders, results_dir,
                                 variable=var).pack(anchor="w", padx=12, pady=0)
                 all_res_vars[vtp] = var
 
-    # --- Source (.bl) files ---
-    all_bl_vars = {}   # bl_abs_path → BooleanVar
-    if src_abs and os.path.isdir(src_abs):
-        bl_files = sorted(glob.glob(os.path.join(src_abs, "*.bl")))
-        if bl_files:
-            ttk.Label(inner, text="Sources",
-                      font=("", 11, "bold")).pack(anchor="w", padx=4, pady=(12, 2))
+    # --- Source (.bl) files — one section per beam label ---
+    all_bl_vars = {}        # bl_abs_path → BooleanVar
+    all_bl_transforms = {}  # bl_abs_path → transform dict or None
+
+    if _src_dirs:
+        ttk.Label(inner, text="Sources",
+                  font=("", 11, "bold")).pack(anchor="w", padx=4, pady=(12, 2))
+        for src_entry in _src_dirs:
+            lbl = src_entry["label"]
+            d_abs = src_entry["dir_abs"]
+            tfm = src_entry["transform"]
+            bl_files = sorted(glob.glob(os.path.join(d_abs, "*.bl")))
+            if not bl_files:
+                continue
+            # Sub-heading per beam
+            ttk.Label(inner, text=f"  {lbl}",
+                      font=("", 10, "italic")).pack(anchor="w", padx=8, pady=(4, 0))
             for bl in bl_files:
                 bn = os.path.splitext(os.path.basename(bl))[0]
                 var = tk.BooleanVar(value=False)
-                ttk.Checkbutton(inner, text=f"  {bn}",
+                ttk.Checkbutton(inner, text=f"    {bn}",
                                 variable=var).pack(anchor="w", padx=12, pady=1)
                 all_bl_vars[bl] = var
+                all_bl_transforms[bl] = tfm
 
     # --- buttons (in the bottom bar) ---
     def _all():
@@ -335,16 +354,45 @@ def _pick_items_dialog(parent, geometry_folders, results_dir,
     return dlg.result_geo, dlg.result_res, dlg
 
 
-def _pick_sources_dialog(parent, script_dir, source_dir, geometry_folders):
+def _pick_sources_dialog(parent, script_dir, source_dir, geometry_folders,
+                         beam_sources=None):
     """Selection dialog for particle sources with embedded 3D viewer.
 
-    Shows .bl files as checkboxes, plus options for direction arrows and
-    arrow length.  Geometry folders can optionally be overlaid.
+    Shows .bl files as checkboxes (grouped by beam label when *beam_sources*
+    is supplied), plus options for direction arrows and arrow length.
+    Geometry folders can optionally be overlaid.
+
+    When *beam_sources* is a list of ``{label, directory, transform}`` dicts
+    each beam's files are shown under its own heading and the stored transform
+    is applied before rendering so all sources appear in the Tokamak frame.
     """
     from tkinter import ttk
 
-    src_abs = (_resolve_viewer_path(script_dir, source_dir)
-               if not os.path.isabs(source_dir) else source_dir)
+    # Build effective source list: either multi-beam or single directory
+    # Each entry: {label, dir_abs, transform}
+    _effective_sources = []
+    if beam_sources:
+        for bs in beam_sources:
+            d = bs.get("directory", "")
+            if os.path.isabs(d):
+                d_abs = d
+            else:
+                # Directories in config are relative to the config/ subfolder
+                # (e.g. "..\\BEAM_CONFIGS\\DNB" from config/config.json).
+                d_abs = os.path.normpath(
+                    os.path.join(script_dir, "config", d))
+            if os.path.isdir(d_abs):
+                _effective_sources.append({
+                    "label": bs.get("label", os.path.basename(d_abs)),
+                    "dir_abs": d_abs,
+                    "transform": bs.get("transform", None),
+                })
+    if not _effective_sources:
+        # Fallback: single directory (legacy)
+        src_abs = (_resolve_viewer_path(script_dir, source_dir)
+                   if not os.path.isabs(source_dir) else source_dir)
+        _effective_sources.append({"label": "Sources", "dir_abs": src_abs,
+                                    "transform": None})
 
     dlg = tk.Toplevel(parent)
     dlg.title("View Particle Sources")
@@ -428,12 +476,20 @@ def _pick_sources_dialog(parent, script_dir, source_dir, geometry_folders):
 
     # --- Populate checkboxes ---
     all_bl_vars = {}   # bl_abs_path → BooleanVar
+    all_bl_transforms = {}  # bl_abs_path → transform dict or None
     all_geo_vars = {}  # folder_name → BooleanVar
 
-    # Source files
-    bl_files = sorted(glob.glob(os.path.join(src_abs, "*.bl")))
-    if bl_files:
-        ttk.Label(inner, text="Source Files",
+    # Source files — grouped by beam label
+    any_bl_found = False
+    for src_entry in _effective_sources:
+        lbl = src_entry["label"]
+        d_abs = src_entry["dir_abs"]
+        tfm = src_entry["transform"]
+        bl_files = sorted(glob.glob(os.path.join(d_abs, "*.bl")))
+        if not bl_files:
+            continue
+        any_bl_found = True
+        ttk.Label(inner, text=lbl,
                   font=("", 11, "bold")).pack(anchor="w", padx=4, pady=(8, 2))
         for bl in bl_files:
             bn = os.path.splitext(os.path.basename(bl))[0]
@@ -441,7 +497,9 @@ def _pick_sources_dialog(parent, script_dir, source_dir, geometry_folders):
             ttk.Checkbutton(inner, text=f"  {bn}",
                             variable=var).pack(anchor="w", padx=12, pady=1)
             all_bl_vars[bl] = var
-    else:
+            all_bl_transforms[bl] = tfm
+
+    if not any_bl_found:
         ttk.Label(inner, text="(no .bl files found)",
                   foreground="grey").pack(padx=8, pady=8)
 
@@ -510,10 +568,14 @@ def _pick_sources_dialog(parent, script_dir, source_dir, geometry_folders):
             geoms = []
             vmax = 0.0
 
-            # Load sources
+            # Load sources with per-file transforms
             if sel_bl:
+                transforms = {bl: all_bl_transforms[bl]
+                              for bl in sel_bl
+                              if all_bl_transforms.get(bl) is not None}
                 src_geoms, vmax = _build_source_geometries(
-                    sel_bl, arrow_length=al, show_direction=sd)
+                    sel_bl, arrow_length=al, show_direction=sd,
+                    transforms=transforms if transforms else None)
                 geoms += src_geoms
 
             # Load geometry overlays

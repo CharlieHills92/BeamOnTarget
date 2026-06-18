@@ -67,6 +67,8 @@ def _build_dict():
         "GEOMETRY_CACHE_DIR": GEOMETRY_CACHE_DIR,
         "GEOMETRY_FOLDERS": GEOMETRY_FOLDERS,
         "PARTICLE_SOURCE_DIR": PARTICLE_SOURCE_DIR,
+        "BEAM_SOURCES": BEAM_SOURCES,
+        "BEAM_COMBINATIONS": BEAM_COMBINATIONS,
         "NUM_PARTICLES_PER_BEAMLET": NUM_PARTICLES_PER_BEAMLET,
         "BEAMLET_RADIUS_M": _BEAMLET_RADIUS_M,
         "PARTICLE_BATCH_SIZE": PARTICLE_BATCH_SIZE,
@@ -113,6 +115,11 @@ def _apply(d):
     g["GEOMETRY_FOLDERS"]           = d.get("GEOMETRY_FOLDERS", {})
 
     g["PARTICLE_SOURCE_DIR"]        = d.get("PARTICLE_SOURCE_DIR", "BEAM_CONFIGS")
+
+    # Multi-beam sources and combinations (new schema)
+    g["BEAM_SOURCES"]       = d.get("BEAM_SOURCES", [])
+    g["BEAM_COMBINATIONS"]  = d.get("BEAM_COMBINATIONS", [])
+
     g["NUM_PARTICLES_PER_BEAMLET"]  = d.get("NUM_PARTICLES_PER_BEAMLET", 10_001)
 
     radius = d.get("BEAMLET_RADIUS_M", 0.007)

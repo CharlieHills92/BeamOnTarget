@@ -1,38 +1,109 @@
 {
-    "NUM_CPU_CORES": 1,
+    "NUM_CPU_CORES": 4,
     "ENABLE_DIAGNOSTIC_SURFACES": false,
     "GEOMETRY_CACHE_DIR": "geometry_cache",
     "GEOMETRY_FOLDERS": {
-        "..\\3D_MODELS\\CAL": {
-            "scale": 1.0,
+        "..\\3D_MODELS\\10_DUCTLINER": {
+            "scale": 0.001,
             "target_length": 1.0,
             "save_details": true,
             "is_diagnostic": false,
             "save_impact_data": false,
             "show_in_plot": false,
-            "max_impact_records": null
-        },
-        "..\\3D_MODELS\\NEU": {
-            "scale": 1.0,
-            "target_length": 1.0,
-            "save_details": true,
-            "is_diagnostic": false,
-            "save_impact_data": false,
-            "show_in_plot": false,
-            "max_impact_records": null
-        },
-        "..\\3D_MODELS\\RID": {
-            "scale": 1.0,
-            "target_length": 1.0,
-            "save_details": true,
-            "is_diagnostic": false,
-            "save_impact_data": false,
-            "show_in_plot": false,
-            "max_impact_records": null
+            "max_impact_records": null,
+            "viewer_max_faces": 50000
         }
     },
     "PARTICLE_SOURCE_DIR": "..\\BEAM_CONFIGS\\DNB",
-    "NUM_PARTICLES_PER_BEAMLET": 1001,
+    "BEAM_SOURCES": [
+        {
+            "label": "DNB",
+            "directory": "..\\BEAM_CONFIGS\\DNB",
+            "transform": {
+                "translation_m": [
+                    11.410436,
+                    26.617882,
+                    0.92
+                ],
+                "rotation_z_deg": -116.0
+            }
+        },
+        {
+            "label": "HNB1",
+            "directory": "..\\BEAM_CONFIGS\\HNB1",
+            "transform": {
+                "translation_m": [
+                    -0.57723,
+                    32.385248,
+                    1.453462
+                ],
+                "rotation_z_deg": -79.543
+            }
+        },
+        {
+            "label": "HNB2",
+            "directory": "..\\BEAM_CONFIGS\\HNB2",
+            "transform": {
+                "translation_m": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "rotation_z_deg": 0.0
+            }
+        }
+    ],
+    "BEAM_COMBINATIONS": [
+        {
+            "name": "DNB_7mrad_0tilt_-2ori_10Halo___cdl_3_+10_+2_D",
+            "sources": [
+                {
+                    "label": "DNB",
+                    "file": "DNB_7mrad_0tilt_-2ori_10Halo_.bl"
+                },
+                {
+                    "label": "HNB1",
+                    "file": "cdl_3_+10_+2_D.bl"
+                }
+            ]
+        },
+        {
+            "name": "DNB_7mrad_0tilt_0ori_10Halo___cdl_7_-10_+2_D",
+            "sources": [
+                {
+                    "label": "DNB",
+                    "file": "DNB_7mrad_0tilt_0ori_10Halo_.bl"
+                },
+                {
+                    "label": "HNB1",
+                    "file": "cdl_7_-10_+2_D.bl"
+                }
+            ]
+        },
+        {
+            "name": "DNB_7mrad_0tilt_2ori_10Halo___cdl_7_-10_-2_D",
+            "sources": [
+                {
+                    "label": "DNB",
+                    "file": "DNB_7mrad_0tilt_2ori_10Halo_.bl"
+                },
+                {
+                    "label": "HNB1",
+                    "file": "cdl_7_-10_-2_D.bl"
+                }
+            ]
+        },
+        {
+            "name": "DNB_7mrad_2tilt_0ori_10Halo_",
+            "sources": [
+                {
+                    "label": "DNB",
+                    "file": "DNB_7mrad_2tilt_0ori_10Halo_.bl"
+                }
+            ]
+        }
+    ],
+    "NUM_PARTICLES_PER_BEAMLET": 101,
     "BEAMLET_RADIUS_M": 0.007,
     "SOURCES_PER_WORKER": null,
     "PARTICLE_BATCH_SIZE": 2500000,

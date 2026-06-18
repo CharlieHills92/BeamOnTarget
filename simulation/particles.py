@@ -6,6 +6,44 @@ load them from configuration files.
 import numpy as np
 import pandas as pd
 
+
+def _apply_beam_transform(df, translation_m, rotation_z_deg):
+    """Apply a rigid body transform (Z-rotation then translation) to beamlet data.
+
+    Converts beamlet positions and directions from beam-local coordinates to
+    the Tokamak global frame using:
+
+        p_tokamak = R_z(theta) @ p_local + t
+
+    Direction vectors are rotated but NOT translated (they are unit vectors).
+
+    Args:
+        df: DataFrame with columns CenterX/Y/Z and DirX/Y/Z (modified in-place).
+        translation_m: sequence of 3 floats [tx, ty, tz] in metres.
+        rotation_z_deg: rotation angle around Z-axis in degrees.
+    """
+    t = np.asarray(translation_m, dtype=np.float64)
+    theta = np.deg2rad(rotation_z_deg)
+    c, s = np.cos(theta), np.sin(theta)
+    # Standard 3×3 rotation matrix around Z
+    Rz = np.array([
+        [ c, -s, 0.0],
+        [ s,  c, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+
+    pos_local = df[['CenterX', 'CenterY', 'CenterZ']].to_numpy(dtype=np.float64)
+    dir_local = df[['DirX', 'DirY', 'DirZ']].to_numpy(dtype=np.float64)
+
+    pos_global = pos_local @ Rz.T + t          # (N,3)
+    dir_global = dir_local @ Rz.T               # rotate only, no translation
+    # Re-normalise directions to guard against floating-point drift
+    norms = np.linalg.norm(dir_global, axis=1, keepdims=True)
+    dir_global = np.where(norms > 0, dir_global / norms, dir_global)
+
+    df[['CenterX', 'CenterY', 'CenterZ']] = pos_global
+    df[['DirX', 'DirY', 'DirZ']] = dir_global
+
 class ParticleSource:
     """Base class for all particle sources."""
     def __init__(self, num_particles, energy_range=(100, 800), mass=0.0, total_current=0.0, charge_state=0, source_index=-1):
@@ -208,10 +246,24 @@ class GaussianTwissBeam(ParticleSource):
         return ray_origins, ray_directions, particle_powers, particle_energies_eV, particle_currents, particle_charge_states
 
 
-def load_beamlets_from_file(filename, num_particles_per_beamlet, beamlet_area):
+def load_beamlets_from_file(filename, num_particles_per_beamlet, beamlet_area,
+                            transform=None, source_index_offset=0):
     """
     Parses a text file to create a list of particle sources.
     Each line in the file defines a beamlet with a core and an optional halo.
+
+    Args:
+        filename: Path to the .bl beamlet definition file.
+        num_particles_per_beamlet: Number of macro-particles per beamlet.
+        beamlet_area: Beamlet cross-sectional area in m² (used for current scaling).
+        transform: Optional dict with keys:
+            ``"translation_m"``   – [tx, ty, tz] in metres
+            ``"rotation_z_deg"``  – rotation around global Z in degrees
+            When provided, all beamlet positions and directions are converted
+            from beam-local coordinates to the Tokamak global frame.
+        source_index_offset: Integer added to every beamlet's source_index.
+            Use this to namespace source IDs when mixing multiple beam files
+            (e.g. DNB: offset=0, HNB1: offset=10000, HNB2: offset=20000).
     """
     try:
         df = pd.read_csv(filename, comment='#', sep=r'\s+')
@@ -219,7 +271,15 @@ def load_beamlets_from_file(filename, num_particles_per_beamlet, beamlet_area):
         print(f"Error: Particle source file not found at '{filename}'"); return []
     except Exception as e:
         print(f"Error reading particle source file '{filename}': {e}"); return []
-        
+
+    # Apply coordinate transform if provided
+    if transform is not None:
+        t = transform.get("translation_m", [0.0, 0.0, 0.0])
+        r = transform.get("rotation_z_deg", 0.0)
+        if t != [0.0, 0.0, 0.0] or r != 0.0:
+            _apply_beam_transform(df, t, r)
+            print(f"  Applied transform: rotation_z={r}°, translation={t} m")
+
     all_sources = []
     print(f"\nLoading {len(df)} beamlet definitions from '{filename}'...")
 
@@ -234,6 +294,7 @@ def load_beamlets_from_file(filename, num_particles_per_beamlet, beamlet_area):
         # Source index: use the 'Index' column from the .bl file if available,
         # otherwise fall back to the DataFrame row position (0-based).
         src_index = int(row['Index']) if 'Index' in row.index else index
+        src_index += source_index_offset
 
         # Create the CORE beam
         num_core = int(num_particles_per_beamlet * (1.0 - halo_frac))

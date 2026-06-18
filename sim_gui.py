@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # sim_gui.py
 """
 Tkinter GUI for managing the BeamOnTarget simulation.
@@ -625,9 +625,22 @@ class SimGUI(tk.Tk):
 
     def _view_geometry_o3d(self):
         src_dir = self.var_src_dir.get()
+        beam_sources_raw = self.cfg.get("BEAM_SOURCES", [])
+        # Resolve beam source directories relative to the active config file,
+        # so relative paths like "..\BEAM_CONFIGS\DNB" resolve correctly.
+        config_dir = os.path.dirname(self._active_config_path)
+        beam_sources = []
+        for bs in beam_sources_raw:
+            d = bs.get("directory", "")
+            d_abs = (d if os.path.isabs(d)
+                     else os.path.normpath(os.path.join(config_dir, d)))
+            resolved = dict(bs)
+            resolved["directory"] = d_abs
+            beam_sources.append(resolved)
         viewer.view_geometry(self, _get_project_folder(),
                              self.cfg.get("GEOMETRY_FOLDERS", {}),
-                             source_dir=src_dir)
+                             source_dir=src_dir,
+                             beam_sources=beam_sources)
 
     def _view_results_o3d(self):
         outdir = self.var_outdir.get()
@@ -645,8 +658,10 @@ class SimGUI(tk.Tk):
 
     def _view_sources_o3d(self):
         src_dir = self.var_src_dir.get()
+        beam_sources = self.cfg.get("BEAM_SOURCES", [])
         viewer.view_sources(self, _get_project_folder(), src_dir,
-                            geometry_folders=self.cfg.get("GEOMETRY_FOLDERS", {}))
+                            geometry_folders=self.cfg.get("GEOMETRY_FOLDERS", {}),
+                            beam_sources=beam_sources)
 
     # ------------------------------------------------------------------
     #  RESULTS tab

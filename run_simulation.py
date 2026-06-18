@@ -55,12 +55,22 @@ def _resolve_config_relative_paths(config_path):
     config.GEOMETRY_FOLDERS = resolved_folders
 
 
-def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
+def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder,
+                        pre_loaded_sources=None):
     """
     The main simulation workflow for a SINGLE run.
     It takes a specific particle file and an output subfolder as arguments.
+
+    Args:
+        grouped_meshes: dict[folder_path, list[trimesh.Mesh]]
+        particle_source_file: path to a .bl file, or None when pre_loaded_sources provided.
+        output_subfolder: name of the output sub-directory.
+        pre_loaded_sources: optional pre-built list[ParticleSource].  When supplied
+            the internal load step is skipped (used by run_combination()).
     """
-    if particle_source_file:
+    if pre_loaded_sources is not None:
+        print(f"\n--- Starting Simulation: '{output_subfolder}' ({len(pre_loaded_sources)} source objects) ---")
+    elif particle_source_file:
         print(f"\n--- Starting Simulation for Beam Config: '{os.path.basename(particle_source_file)}' ---")
     else:
         print(f"\n--- Starting Simulation using fallback particle sources ---")
@@ -88,8 +98,10 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
     scene_mesh = trimesh.util.concatenate(original_meshes)
     face_offsets = np.cumsum([0] + face_counts[:-1])
 
-    # Load Particle Sources from the SPECIFIED file
-    if particle_source_file:
+    # Load Particle Sources from the SPECIFIED file (or use pre-loaded list)
+    if pre_loaded_sources is not None:
+        particle_sources_list = pre_loaded_sources
+    elif particle_source_file:
         particle_sources_list = particles.load_beamlets_from_file(
             filename=particle_source_file,
             num_particles_per_beamlet=config.NUM_PARTICLES_PER_BEAMLET,
@@ -184,7 +196,7 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
         print("\nWARNING: Automatic visualization is disabled in the memory-safe workflow.")
         print("         Please use post_process.py to view results after the run completes.")
 
-    print(f"\n--- Finished Simulation for: '{os.path.basename(particle_source_file) if particle_source_file else 'fallback_run'}' ---")
+    print(f"\n--- Finished Simulation: '{output_subfolder}' ---")
 
     # --- NEW: Automatic call to the batch smoother ---
     if config.RUN_SMOOTHER_AFTER_SIM:
@@ -209,6 +221,80 @@ def run_full_simulation(grouped_meshes, particle_source_file, output_subfolder):
             except Exception as e:
                 print(f"An error occurred during report generation: {e}")
             print("--- Report Generation Finished ---")
+
+def run_combination(grouped_meshes, combo):
+    """Load and merge multiple beam sources for a single combined simulation run.
+
+    Each entry in ``combo["sources"]`` refers to one beam label + file.  The
+    matching entry in ``config.BEAM_SOURCES`` supplies the coordinate transform.
+    Source indices are namespaced per beam (DNB: +0, HNB1: +10000, HNB2: +20000,
+    additional beams: +30000, +40000, …) so that impact-data CSVs are unambiguous.
+
+    Args:
+        grouped_meshes: shared geometry dict from geometry.load_scene().
+        combo: dict with keys ``"name"`` (str) and ``"sources"`` (list of dicts,
+            each having ``"label"`` and ``"file"``).
+    """
+    combo_name = combo.get("name", "unnamed_combination")
+    source_entries = combo.get("sources", [])
+
+    # Build a label→beam-source-config lookup
+    beam_source_map = {bs["label"]: bs for bs in (config.BEAM_SOURCES or [])}
+
+    merged_sources = []
+    # Assign a fixed 10000-step namespace offset per beam label encountered
+    label_offsets = {}
+    next_offset = 0
+
+    for entry in source_entries:
+        label = entry.get("label", "")
+        bl_file_name = entry.get("file", "")
+        if not bl_file_name:
+            print(f"  [Combination '{combo_name}'] Skipping entry with no file (label='{label}').")
+            continue
+
+        beam_cfg = beam_source_map.get(label, {})
+        beam_dir = beam_cfg.get("directory", config.PARTICLE_SOURCE_DIR or "")
+        transform = beam_cfg.get("transform", None)
+
+        # Resolve the directory relative to the project folder
+        if not os.path.isabs(beam_dir):
+            project = getattr(config, "PROJECT_FOLDER", os.path.dirname(
+                os.path.abspath(__file__)))
+            beam_dir = os.path.abspath(os.path.join(project, beam_dir))
+
+        bl_path = os.path.join(beam_dir, bl_file_name)
+        if not os.path.isfile(bl_path):
+            print(f"  [Combination '{combo_name}'] WARNING: .bl file not found: {bl_path}")
+            continue
+
+        # Assign a namespace offset for this label (deterministic, based on order seen)
+        if label not in label_offsets:
+            label_offsets[label] = next_offset
+            next_offset += 10000
+        offset = label_offsets[label]
+
+        print(f"  Loading '{label}' from '{os.path.basename(bl_path)}'"
+              f" (source_index offset={offset})")
+        sources = particles.load_beamlets_from_file(
+            filename=bl_path,
+            num_particles_per_beamlet=config.NUM_PARTICLES_PER_BEAMLET,
+            beamlet_area=config.BEAMLET_AREA_FOR_CURRENT,
+            transform=transform,
+            source_index_offset=offset,
+        )
+        merged_sources.extend(sources)
+
+    if not merged_sources:
+        print(f"  [Combination '{combo_name}'] No sources loaded — skipping.")
+        return
+
+    print(f"\n  Combination '{combo_name}': {len(merged_sources)} total source objects "
+          f"from {len(source_entries)} beam(s).")
+    run_full_simulation(grouped_meshes, particle_source_file=None,
+                        output_subfolder=combo_name,
+                        pre_loaded_sources=merged_sources)
+
 
 def run_setup_preview(grouped_meshes, view_mode):
     """Shows a 3D plot of the setup based on the view_mode."""
@@ -273,7 +359,15 @@ def main(argv=None):
         run_setup_preview(grouped_geometry, view_mode=args.view_setup)
     else:
         # --- Batch Simulation Loop ---
-        if config.PARTICLE_SOURCE_DIR:
+        beam_combinations = getattr(config, "BEAM_COMBINATIONS", [])
+
+        if beam_combinations:
+            # New multi-beam path: each combination is one simulation run
+            print(f"\nFound {len(beam_combinations)} beam combination(s) to simulate.")
+            for combo in beam_combinations:
+                run_combination(grouped_geometry, combo)
+        elif config.PARTICLE_SOURCE_DIR:
+            # Legacy single-directory path (backward compatible)
             search_path = os.path.join(config.PARTICLE_SOURCE_DIR, '*.bl')
             beam_config_files = sorted(glob.glob(search_path))
 
