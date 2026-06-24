@@ -1638,8 +1638,9 @@ def view_sources(parent, script_dir, source_dir, geometry_folders=None):
 # ===================================================================
 if __name__ == "__main__":
     import json
+    from beamontarget.paths import get_project_root
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir = str(get_project_root())
     cfg_path = os.path.join(script_dir, "config.json")
     with open(cfg_path) as f:
         cfg = json.load(f)

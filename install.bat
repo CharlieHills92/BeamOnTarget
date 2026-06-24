@@ -8,7 +8,7 @@ REM
 REM After installation:
 REM   venv\Scripts\activate
 REM   beamontarget              — launches the GUI
-REM   python run_simulation.py  — runs a headless simulation
+REM   python -m beamontarget.workflows.run_simulation -i config.json  — runs a headless simulation
 
 setlocal
 
@@ -48,7 +48,7 @@ echo To use:
 echo   BeamOnTarget.cmd              ^<^< double-click to launch the GUI
 echo   %VENV_DIR%\Scripts\activate
 echo   beamontarget                  — launch the GUI
-echo   python run_simulation.py      — run a simulation
+echo   python -m beamontarget.workflows.run_simulation -i config.json
 echo.
 
 endlocal

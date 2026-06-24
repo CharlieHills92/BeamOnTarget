@@ -1,10 +1,10 @@
-# config.py
+﻿# config.py
 """
 Configuration loader for the particle simulation.
 
 Reads parameters from config.json and exposes them as module-level variables
 so that all existing code (engine.py, run_simulation.py, output.py, etc.)
-continues to work with ``import config; config.NUM_CPU_CORES``.
+continues to work with ``from beamontarget import config; config.NUM_CPU_CORES``.
 
 The JSON file can be edited by hand or via the GUI (sim_gui.py).
 """
@@ -13,12 +13,12 @@ import math
 import os
 import sys
 import numpy as np
+from beamontarget.paths import get_project_root
 
 # ---------------------------------------------------------------------------
-# Path to the JSON configuration file (next to this script by default)
+# Path to the JSON configuration file (kept at repository root)
 # ---------------------------------------------------------------------------
-_CONFIG_DIR = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
-               else os.path.dirname(os.path.abspath(__file__)))
+_CONFIG_DIR = str(get_project_root())
 _CONFIG_FILE = os.path.join(_CONFIG_DIR, "config.json")
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ def _apply(d):
 
 
 # ---------------------------------------------------------------------------
-# Physics model — kept as a Python function (not serialisable to JSON).
+# Physics model â€” kept as a Python function (not serialisable to JSON).
 # The JSON stores the constant fraction; this wraps it as a callable.
 # ---------------------------------------------------------------------------
 
@@ -181,3 +181,6 @@ def get_deposition_fraction(energy_eV):
 # Initialise on first import
 # ---------------------------------------------------------------------------
 _apply(_load_json())
+
+
+

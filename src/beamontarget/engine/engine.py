@@ -1,4 +1,4 @@
-# engine.py
+﻿# engine.py
 """
 The definitive high-performance, parallel, memory-safe simulation engine.
 Its ONLY job is to compute the final power deposition. It does not handle
@@ -11,10 +11,10 @@ import math
 import time
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from field_provider import create_field_provider
-from reactions import create_reaction_model
-from em_tracker_v2 import trace_particle_batch_em_only
-from trajectory_intersector import intersect_trajectory_segments_bvh
+from beamontarget.interactions.field_provider import create_field_provider
+from beamontarget.interactions.reactions import create_reaction_model
+from beamontarget.interactions.em_tracker_v2 import trace_particle_batch_em_only
+from beamontarget.engine.trajectory_intersector import intersect_trajectory_segments_bvh
 
 def _empty_particle_batch():
     return {
@@ -178,7 +178,7 @@ def _process_particle_batch_ray(particle_batch, intersector, face_offsets, face_
         object_indices = np.searchsorted(face_offsets, index_tri_global, side='right') - 1
         local_tri_indices = index_tri_global - face_offsets[object_indices]
 
-        # Build sparse updates per object — fully vectorized
+        # Build sparse updates per object â€” fully vectorized
         for obj_idx in np.unique(object_indices):
             mask = (object_indices == obj_idx)
             idxs = local_tri_indices[mask]
@@ -228,8 +228,8 @@ def run_simulation_single_hit(scene_mesh, face_offsets, face_counts, particle_so
     MANAGER FUNCTION: Dispatches chunks, combines power results and (optionally) impact data.
     Returns: (final_deposited_power, impact_data)
       impact_data: list of dicts per object. Each dict has:
-        'total_hits': int — total number of particle impacts on this object
-        'stored_hits': int — number of impact records actually stored (≤ max_impact_records)
+        'total_hits': int â€” total number of particle impacts on this object
+        'stored_hits': int â€” number of impact records actually stored (â‰¤ max_impact_records)
         'records': list of tuples (source_index, mass_kg, charge_state, pos_x, pos_y, pos_z,
                                    dir_x, dir_y, dir_z, kinetic_energy_eV, current_A)
       Only populated for objects where save_impact_flags[i] is True.
@@ -550,6 +550,7 @@ def run_simulation_em_track_then_bvh(
         print(f"  - Total traced: {total_traced:.2f} s")
 
     return final_deposited_power, impact_data, per_species_power
+
 
 
 

@@ -14,7 +14,7 @@ output files — all from a graphical interface or the command line.
 
 ## Key Features
 
-- **Graphical User Interface** — Tkinter-based GUI (`sim_gui.py`) for
+- **Graphical User Interface** — Tkinter-based GUI (`beamontarget.gui.sim_gui`) for
   managing configurations, launching simulations, viewing results in an
   embedded 3D viewer (Open3D), and comparing CSV summaries with
   interactive bar-charts.
@@ -53,20 +53,20 @@ output files — all from a graphical interface or the command line.
 
 | File | Description |
 |---|---|
-| `sim_gui.py` | Tkinter GUI — the main graphical entry point (`beamontarget` command). |
-| `viewer.py` | Built-in 3D viewer (Open3D off-screen rendering in Tk canvas). |
-| `run_simulation.py` | CLI entry point — handles arguments and orchestrates simulation runs. |
-| `config.py` | Central configuration module; reads/writes `config.json`. |
+| `src/beamontarget/gui/sim_gui.py` | Tkinter GUI — the main graphical entry point (`beamontarget` command). |
+| `src/beamontarget/visualization/viewer.py` | Built-in 3D viewer (Open3D off-screen rendering in Tk canvas). |
+| `src/beamontarget/workflows/run_simulation.py` | CLI entry point — handles arguments and orchestrates simulation runs. |
+| `src/beamontarget/config.py` | Central configuration module; reads/writes `config.json`. |
 | `config.json` | JSON file with all simulation parameters (edited via GUI or text). |
-| `engine.py` | Core computational engine — power deposition calculation. |
-| `geometry.py` | Loading, processing, caching, and grouping of `.stl` meshes. |
-| `particles.py` | Particle source classes and `.bl` file loading. |
-| `output.py` | File output — `.vtp` saving and summary `.csv` reports. |
-| `smooth_results.py` | Core smoothing logic (library). |
-| `batch_smoother.py` | Applies smoothing to result `.vtp` files in a directory. |
-| `post_smooth.py` | Additional post-processing / smoothing utilities. |
-| `generate_report.py` | Automated report generation from results. |
-| `extract_mesh_data.py` | CLI tool for extracting mesh cell data from `.vtp` to CSV. |
+| `src/beamontarget/engine/engine.py` | Core computational engine — power deposition calculation. |
+| `src/beamontarget/geometry/geometry.py` | Loading, processing, caching, and grouping of `.stl` meshes. |
+| `src/beamontarget/particles/particles.py` | Particle source classes and `.bl` file loading. |
+| `src/beamontarget/io/output.py` | File output — `.vtp` saving and summary `.csv` reports. |
+| `src/beamontarget/io/smooth_results.py` | Core smoothing logic (library). |
+| `src/beamontarget/io/batch_smoother.py` | Applies smoothing to result `.vtp` files in a directory. |
+| `src/beamontarget/workflows/post_smooth.py` | Additional post-processing / smoothing utilities. |
+| `src/beamontarget/io/generate_report.py` | Automated report generation from results. |
+| `src/beamontarget/io/extract_mesh_data.py` | CLI tool for extracting mesh cell data from `.vtp` to CSV. |
 | `pyproject.toml` | Modern Python packaging metadata (PEP 621). |
 | `requirements.txt` | Pinned dependency list (legacy, kept for reference). |
 | `install.sh` | One-step installer for **Linux**. |
@@ -148,7 +148,7 @@ pip install -r requirements.txt
 ```bash
 beamontarget              # if installed via pip install -e .
 # or
-python sim_gui.py         # direct execution
+python -m beamontarget.gui.sim_gui
 ```
 
 The GUI has five tabs:
@@ -185,7 +185,7 @@ The GUI has five tabs:
 Click **▶ Run** in the **Run** tab, or from the command line:
 
 ```bash
-python run_simulation.py
+python -m beamontarget.workflows.run_simulation
 ```
 
 Results are saved as `.vtp` files in the output directory (default
@@ -211,25 +211,25 @@ Results are saved as `.vtp` files in the output directory (default
 
 ```bash
 # Run all .bl files in the configured source directory
-python run_simulation.py
+python -m beamontarget.workflows.run_simulation
 
 # Preview geometry and source positions
-python run_simulation.py --view-setup
+python -m beamontarget.workflows.run_simulation --view-setup
 
 # Preview geometry only
-python run_simulation.py --view-setup geo
+python -m beamontarget.workflows.run_simulation --view-setup geo
 ```
 
 ### Manual Smoothing
 
 ```bash
-python batch_smoother.py -i OUTPUT/my_beam_run
+python -m beamontarget.io.batch_smoother -i OUTPUT/my_beam_run
 ```
 
 ### VTP Data Extraction (CLI)
 
 ```bash
-python extract_mesh_data.py input.vtp -o output.csv
+python -m beamontarget.io.extract_mesh_data input.vtp -o output.csv
 ```
 
 ---
@@ -256,4 +256,4 @@ automatically.  Key packages:
 
 ## License
 
-This project is released under the [MIT License](LICENSE).
+This project is released under the [GNU GPLv3 License](LICENSE).

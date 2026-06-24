@@ -1,7 +1,7 @@
-"""Output tab — output directory, file options, and post-processing smoother."""
+﻿"""Output tab â€” output directory, file options, and post-processing smoother."""
 import tkinter as tk
 from tkinter import ttk
-from gui_widgets import make_card, browse_directory
+from beamontarget.gui.gui_widgets import make_card, browse_directory
 
 class OutputTab(ttk.Frame):
     """Output paths, save options, and batch smoother configuration."""
@@ -21,7 +21,7 @@ class OutputTab(ttk.Frame):
         self.var_outdir = tk.StringVar(value=self.cfg.get("DETAILED_OUTPUT_DIR", "OUTPUT"))
         ttk.Entry(card, textvariable=self.var_outdir, width=30).grid(
             row=0, column=1, sticky="we", padx=(8, 4))
-        ttk.Button(card, text="Browse…", style="Secondary.TButton",
+        ttk.Button(card, text="Browseâ€¦", style="Secondary.TButton",
                     command=lambda: browse_directory(self.var_outdir)).grid(
             row=0, column=2)
 
@@ -45,7 +45,7 @@ class OutputTab(ttk.Frame):
                              style="Card.TCheckbutton").pack(anchor="w", pady=2)
             setattr(self, f"var_{key}", v)
 
-        ttk.Button(opts_card, text="📤 Extract results data…",
+        ttk.Button(opts_card, text="ðŸ“¤ Extract results dataâ€¦",
                     style="Secondary.TButton",
                     command=self._open_extract_dialog).pack(
                         anchor="w", pady=(8, 0))
@@ -68,7 +68,7 @@ class OutputTab(ttk.Frame):
             row=0, column=1, sticky="w", padx=(8, 0))
 
         # Row 1: Max Cell Area
-        ttk.Label(sm_grid, text="Max cell area (m², empty=None):", style="Card.TLabel").grid(
+        ttk.Label(sm_grid, text="Max cell area (mÂ², empty=None):", style="Card.TLabel").grid(
             row=1, column=0, sticky="w", pady=5)
         mca = self.cfg.get("SMOOTHING_MAX_CELL_AREA")
         self.var_sm_mca = tk.StringVar(value=str(mca) if mca is not None else "")

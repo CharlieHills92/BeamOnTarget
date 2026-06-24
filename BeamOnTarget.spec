@@ -6,7 +6,7 @@ PROJECT_DIR = os.path.abspath(os.path.dirname(__file__))
 
 datas = []
 binaries = []
-hiddenimports = ['open3d', 'pyvista', 'pandas', 'numpy', 'trimesh', 'scipy', 'PIL', 'matplotlib', 'matplotlib.backends.backend_tkagg', 'threadpoolctl', 'joblib', 'fast_simplification', 'tqdm', 'config', 'geometry', 'particles', 'engine', 'output', 'batch_smoother', 'generate_report', 'run_simulation', 'embreex.rtcore']
+hiddenimports = ['open3d', 'pyvista', 'pandas', 'numpy', 'trimesh', 'scipy', 'PIL', 'matplotlib', 'matplotlib.backends.backend_tkagg', 'threadpoolctl', 'joblib', 'fast_simplification', 'tqdm', 'beamontarget.config', 'beamontarget.geometry.geometry', 'beamontarget.particles.particles', 'beamontarget.engine.engine', 'beamontarget.io.output', 'beamontarget.io.batch_smoother', 'beamontarget.io.generate_report', 'beamontarget.workflows.run_simulation', 'beamontarget.gui.sim_gui', 'embreex.rtcore']
 tmp_ret = collect_all('open3d')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('pyvista')
@@ -28,8 +28,8 @@ datas += [
 
 
 a = Analysis(
-    [os.path.join(PROJECT_DIR, 'sim_gui.py')],
-    pathex=[],
+    [os.path.join(PROJECT_DIR, 'src', 'beamontarget', 'gui', 'sim_gui.py')],
+    pathex=[os.path.join(PROJECT_DIR, 'src')],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

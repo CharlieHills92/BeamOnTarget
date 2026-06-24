@@ -7,7 +7,7 @@
 #
 # After installation, activate the venv and run:
 #   beamontarget              # launches the GUI
-#   python run_simulation.py  # runs a headless simulation
+#   python -m beamontarget.workflows.run_simulation -i config.json  # runs a headless simulation
 
 set -euo pipefail
 
@@ -42,5 +42,5 @@ echo ""
 echo "To use:"
 echo "  source ${VENV_DIR}/bin/activate"
 echo "  beamontarget                  # launch the GUI"
-echo "  python run_simulation.py      # run a simulation"
+echo "  python -m beamontarget.workflows.run_simulation -i config.json"
 echo ""

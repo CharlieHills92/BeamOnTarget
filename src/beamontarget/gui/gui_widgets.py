@@ -5,13 +5,14 @@ All tab modules import from here so that styling is consistent.
 import tkinter as tk
 from tkinter import ttk
 import os, sys
+from beamontarget.paths import get_project_root
 
 # ---------------------------------------------------------------------------
 #  Path helpers
 # ---------------------------------------------------------------------------
 _IS_FROZEN = getattr(sys, 'frozen', False)
 _SCRIPT_DIR = (os.path.dirname(sys.executable) if _IS_FROZEN
-               else os.path.dirname(os.path.abspath(__file__)))
+               else str(get_project_root()))
 _PROJECT_FOLDER = _SCRIPT_DIR
 
 

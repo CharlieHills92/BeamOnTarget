@@ -1,13 +1,13 @@
-"""Pre-run diagnostics for EM tracking and reactions."""
+﻿"""Pre-run diagnostics for EM tracking and reactions."""
 
 import os
 
 import numpy as np
 
-import cross_sections
-from constants import ELEMENTARY_CHARGE_C
-from field_provider import create_field_provider
-from reactions import create_reaction_model
+from beamontarget.interactions import cross_sections
+from beamontarget.constants import ELEMENTARY_CHARGE_C
+from beamontarget.interactions.field_provider import create_field_provider
+from beamontarget.interactions.reactions import create_reaction_model
 
 
 def _estimate_em_larmor_radius(particle_sources_list, external_field_cfg, reaction_model_cfg):
@@ -366,3 +366,6 @@ def run_em_prerun_analysis(
         output_dir_for_run=output_dir_for_run,
         em_step_length_m=em_step_length_m,
     )
+
+
+

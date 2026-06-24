@@ -1,4 +1,4 @@
-# run_simulation.py
+﻿# run_simulation.py
 """
 Main entry point for the particle-mesh interaction simulation.
 
@@ -15,14 +15,14 @@ import trimesh
 import numpy as np
 import os
 import glob
-import config
-import geometry
-import particles
-import engine
-import output
-from prerun_analysis import run_em_prerun_analysis
-import batch_smoother # <-- NEW: Import the batch smoother script
-import generate_report
+from beamontarget import config
+from beamontarget.geometry import geometry
+from beamontarget.particles import particles
+from beamontarget.engine import engine
+from beamontarget.io import output
+from beamontarget.workflows.prerun_analysis import run_em_prerun_analysis
+from beamontarget.io import batch_smoother # <-- NEW: Import the batch smoother script
+from beamontarget.io import generate_report
 
 
 def _resolve_config_relative_paths(config_path):
@@ -294,3 +294,5 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
+

@@ -1,8 +1,8 @@
-"""Species state container used by EM particle tracking."""
+﻿"""Species state container used by EM particle tracking."""
 
 from dataclasses import dataclass
 import numpy as np
-from constants import ELEMENTARY_CHARGE_C
+from beamontarget.constants import ELEMENTARY_CHARGE_C
 
 
 @dataclass
@@ -23,3 +23,4 @@ def build_species_frame(mass_kg, charge_state_e):
         mass_kg=np.asarray(mass_kg, dtype=np.float64),
         charge_state_e=np.asarray(charge_state_e, dtype=np.int32),
     )
+

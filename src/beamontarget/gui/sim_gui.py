@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # sim_gui.py
 """
 Tkinter GUI for managing the BeamOnTarget simulation.
@@ -9,6 +9,7 @@ Launches ParaView externally for geometry and results viewing.
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import ctypes
 import os
 import sys
 import subprocess
@@ -19,9 +20,10 @@ import matplotlib
 matplotlib.use("Agg")  # non-interactive backend; sub-tabs import their own
 from PIL import Image, ImageTk
 
-import viewer  # built-in Open3D viewer
-from config import load_config, save_config
-from gui_widgets import (
+from beamontarget.visualization import viewer  # built-in Open3D viewer
+from beamontarget.config import load_config, save_config
+from beamontarget.paths import get_project_root
+from beamontarget.gui.gui_widgets import (
     make_card,
     parse_vec3,
     resolve_path as _resolve_path,
@@ -29,13 +31,13 @@ from gui_widgets import (
     get_project_folder as _get_project_folder,
     to_relative_path as _to_relative_path,
 )
-from gui_fields import FieldsTab
-from gui_reactions import ReactionsTab
-from gui_results import ResultsTab
-from gui_geometry import GeometryTab
-from gui_particles import ParticlesTab
-from gui_output import OutputTab
-from gui_run import RunTab
+from beamontarget.gui.gui_fields import FieldsTab
+from beamontarget.gui.gui_reactions import ReactionsTab
+from beamontarget.gui.gui_results import ResultsTab
+from beamontarget.gui.gui_geometry import GeometryTab
+from beamontarget.gui.gui_particles import ParticlesTab
+from beamontarget.gui.gui_output import OutputTab
+from beamontarget.gui.gui_run import RunTab
 
 # ---------------------------------------------------------------------------
 # Resolve paths  (canonical copies live in gui_widgets; keep local for
@@ -43,13 +45,10 @@ from gui_run import RunTab
 # ---------------------------------------------------------------------------
 _IS_FROZEN = getattr(sys, 'frozen', False)  # True when running from PyInstaller exe
 _SCRIPT_DIR = (os.path.dirname(sys.executable) if _IS_FROZEN
-               else os.path.dirname(os.path.abspath(__file__)))
+               else str(get_project_root()))
 _CONFIG_JSON = os.path.join(_SCRIPT_DIR, "config.json")
-_RUN_SIMULATION = os.path.join(_SCRIPT_DIR, "run_simulation.py")
-_RUN_SMOOTHING = os.path.join(_SCRIPT_DIR, "smooth_results.py")
-_PYTHON = sys.executable  # the same Python that launched the GUI
 _SPLASH_LOGO = os.path.join(_SCRIPT_DIR, "BOT_logo.png")
-_APP_ICON_BMP = os.path.join(_SCRIPT_DIR, "BOT_icon.bmp")
+_APP_ICON_ICO = os.path.join(_SCRIPT_DIR, "BOT_icon.ico")
 
 
 # ===================================================================
@@ -126,9 +125,9 @@ def launch_paraview(script_content, pv_path, pv_module="ParaView"):
     """Write a temp script and launch ParaView.
 
     On Linux the EasyBuild module *pv_module* is loaded first (via
-    ``bash -lc 'ml …'``) so that LD_LIBRARY_PATH etc. are set.
+    ``bash -lc 'ml â€¦'``) so that LD_LIBRARY_PATH etc. are set.
 
-    On Windows ParaView is invoked directly — no module system needed.
+    On Windows ParaView is invoked directly - no module system needed.
     """
     tmp_script = os.path.join(_SCRIPT_DIR, ".pv_temp_script.py")
     with open(tmp_script, "w") as f:
@@ -168,7 +167,7 @@ def launch_paraview(script_content, pv_path, pv_module="ParaView"):
                     except Exception:
                         pass
             except subprocess.TimeoutExpired:
-                pass  # still running — good
+                pass  # still running - good
         threading.Thread(target=_watch, daemon=True).start()
     except FileNotFoundError:
         messagebox.showerror("ParaView not found",
@@ -194,7 +193,7 @@ class SimGUI(tk.Tk):
         self._set_app_icon()
         self._show_startup_logo()
 
-        self.title("BeamOnTarget — Simulation Manager")
+        self.title("BeamOnTarget - Simulation Manager")
         self.geometry("1000x760")
         self.minsize(860, 640)
         self.cfg = load_config(self._active_config_path)
@@ -210,8 +209,15 @@ class SimGUI(tk.Tk):
     def _set_app_icon(self):
         """Set the runtime app icon for title bar/taskbar on Windows."""
         try:
-            if os.path.exists(_APP_ICON_BMP):
-                self._icon_photo = ImageTk.PhotoImage(Image.open(_APP_ICON_BMP))
+            if sys.platform == "win32":
+                # Ensure Windows taskbar groups and displays this app as BeamOnTarget.
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("BeamOnTarget.App")
+
+            if os.path.exists(_APP_ICON_ICO):
+                if sys.platform == "win32":
+                    # Prefer ICO for Windows taskbar/title bar behavior.
+                    self.iconbitmap(_APP_ICON_ICO)
+                self._icon_photo = ImageTk.PhotoImage(Image.open(_APP_ICON_ICO))
                 self.iconphoto(True, self._icon_photo)
         except Exception:
             pass
@@ -251,7 +257,7 @@ class SimGUI(tk.Tk):
     # ------------------------------------------------------------------
     def _apply_theme(self):
         style = ttk.Style(self)
-        # Use clam as the base — it supports most colour overrides
+        # Use clam as the base - it supports most colour overrides
         style.theme_use("clam")
 
         # --- Colour palette ---
@@ -445,9 +451,9 @@ class SimGUI(tk.Tk):
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Save Config", accelerator="Ctrl+S",
                               command=self._save)
-        file_menu.add_command(label="Save Config As…", accelerator="Ctrl+Shift+S",
+        file_menu.add_command(label="Save Config Asâ€¦", accelerator="Ctrl+Shift+S",
                               command=self._save_as)
-        file_menu.add_command(label="Load Config…", accelerator="Ctrl+O",
+        file_menu.add_command(label="Load Configâ€¦", accelerator="Ctrl+O",
                               command=self._load_config_file)
         file_menu.add_separator()
         file_menu.add_command(label="Quit", command=self.destroy)
@@ -455,18 +461,18 @@ class SimGUI(tk.Tk):
         self.config(menu=menubar)
 
         view_menu = tk.Menu(menubar, tearoff=0)
-        view_menu.add_command(label="View All (Open3D)…",
+        view_menu.add_command(label="View All (Open3D)â€¦",
                               command=self._view_all_o3d)
-        view_menu.add_command(label="View Geometry (Open3D)…",
+        view_menu.add_command(label="View Geometry (Open3D)â€¦",
                               command=self._view_geometry_o3d)
-        view_menu.add_command(label="View Results (Open3D)…",
+        view_menu.add_command(label="View Results (Open3D)â€¦",
                               command=self._view_results_o3d)
-        view_menu.add_command(label="View Sources (Open3D)…",
+        view_menu.add_command(label="View Sources (Open3D)â€¦",
                               command=self._view_sources_o3d)
         view_menu.add_separator()
-        view_menu.add_command(label="View Geometry (ParaView)…",
+        view_menu.add_command(label="View Geometry (ParaView)â€¦",
                               command=self._view_geometry)
-        view_menu.add_command(label="View Results (ParaView)…",
+        view_menu.add_command(label="View Results (ParaView)â€¦",
                               command=self._view_results)
         menubar.add_cascade(label="View", menu=view_menu)
 
@@ -479,7 +485,7 @@ class SimGUI(tk.Tk):
     # ------------------------------------------------------------------
     def _build_general_tab(self, nb):
         outer = ttk.Frame(nb)
-        nb.add(outer, text="  ⚙  General  ")
+        nb.add(outer, text="  âš™  General  ")
 
         # --- Tracking Method card ---
         method_card = self._make_card(outer, "Tracking Method", pady=(12, 10))
@@ -597,7 +603,7 @@ class SimGUI(tk.Tk):
             self._sync_project_folder(default_to_active=True)
 
         self.var_project_folder.trace_add("write", _on_project_folder_change)
-        ttk.Button(card, text="Browse…", style="Secondary.TButton",
+        ttk.Button(card, text="Browseâ€¦", style="Secondary.TButton",
                     command=self._browse_project_folder).grid(row=row, column=2)
 
         row += 1
@@ -617,10 +623,10 @@ class SimGUI(tk.Tk):
         self.var_pv_path = tk.StringVar(value=self.cfg.get("PARAVIEW_PATH", "paraview"))
         ttk.Entry(pv_card, textvariable=self.var_pv_path, width=50).grid(
             row=0, column=1, sticky="we", padx=(8, 4))
-        ttk.Button(pv_card, text="Browse…", style="Secondary.TButton",
+        ttk.Button(pv_card, text="Browseâ€¦", style="Secondary.TButton",
                     command=self._browse_pv).grid(row=0, column=2)
 
-        # ParaView module (EasyBuild) — only shown on Linux
+        # ParaView module (EasyBuild) - only shown on Linux
         self.var_pv_module = tk.StringVar(value=self.cfg.get("PARAVIEW_MODULE", "ParaView"))
         if sys.platform != "win32":
             ttk.Label(pv_card, text="ParaView module (ml):", style="Card.TLabel").grid(
@@ -659,7 +665,7 @@ class SimGUI(tk.Tk):
             view_geometry_fn=self._view_geometry,
             view_geometry_o3d_fn=self._view_geometry_o3d,
         )
-        nb.add(self._geometry_tab, text="  📐  Geometry  ")
+        nb.add(self._geometry_tab, text="  ðŸ“  Geometry  ")
 
     # ------------------------------------------------------------------
     #  PARTICLES tab (delegated to gui_particles.py)
@@ -669,7 +675,7 @@ class SimGUI(tk.Tk):
             nb, self.cfg, self._colours,
             view_sources_o3d_fn=self._view_sources_o3d,
         )
-        nb.add(self._particles_tab, text="  🔬  Particles  ")
+        nb.add(self._particles_tab, text="  ðŸ”¬  Particles  ")
 
     @property
     def var_src_dir(self):
@@ -681,7 +687,7 @@ class SimGUI(tk.Tk):
     def _build_fields_tab(self, nb):
         self._fields_tab = FieldsTab(nb, self.cfg,
                                      get_collect_fn=self._collect)
-        nb.add(self._fields_tab, text="  🧲  Fields  ")
+        nb.add(self._fields_tab, text="  ðŸ§²  Fields  ")
 
     # ------------------------------------------------------------------
     #  REACTIONS tab (delegated to gui_reactions.py)
@@ -694,7 +700,7 @@ class SimGUI(tk.Tk):
             get_em_step=lambda: self.var_em_step.get(),
             get_collect_fn=self._collect,
         )
-        nb.add(self._reactions_tab, text="  ⚛  Reactions  ")
+        nb.add(self._reactions_tab, text="  âš›  Reactions  ")
 
     # ------------------------------------------------------------------
     #  OUTPUT tab (delegated to gui_output.py)
@@ -704,7 +710,7 @@ class SimGUI(tk.Tk):
             nb, self.cfg, self._colours,
             open_extract_fn=self._open_extract_dialog,
         )
-        nb.add(self._output_tab, text="  📁  Output  ")
+        nb.add(self._output_tab, text="  ðŸ“  Output  ")
 
     @property
     def var_outdir(self):
@@ -786,7 +792,7 @@ class SimGUI(tk.Tk):
             open_extract_fn=self._open_extract_dialog,
             view_results_o3d_fn=self._view_results_o3d,
         )
-        nb.add(self._results_tab, text="  📊  Results  ")
+        nb.add(self._results_tab, text="  ðŸ“Š  Results  ")
 
 
     # ------------------------------------------------------------------
@@ -806,7 +812,7 @@ class SimGUI(tk.Tk):
                 self._output_tab.var_sm_mca.get().strip(),
             ),
         )
-        nb.add(self._run_tab, text="  ▶  Run  ")
+        nb.add(self._run_tab, text="  â–¶  Run  ")
 
     # ------------------------------------------------------------------
     #  Shared helpers
@@ -823,7 +829,7 @@ class SimGUI(tk.Tk):
             self._set_active_config_path(path)
             self._sync_project_folder(default_to_active=True)
             self._refresh_all_from_cfg()
-            self._log(f"✔ Configuration loaded from {os.path.basename(path)}\n")
+            self._log(f"âœ” Configuration loaded from {os.path.basename(path)}\n")
             self._set_status(f"Loaded config: {os.path.basename(path)}")
         except Exception as e:
             messagebox.showerror("Load Error", str(e))
@@ -851,9 +857,9 @@ class SimGUI(tk.Tk):
         d["EM_BVH_CHECKPOINT_DISTANCE_M"] = self.var_em_checkpoint.get()
         d["EM_BOUNDING_BOX_MIN_CORNER_M"] = self._parse_vec3(self.var_bbox_min.get())
         d["EM_BOUNDING_BOX_MAX_CORNER_M"] = self._parse_vec3(self.var_bbox_max.get())
-        # External field — delegate to FieldsTab
+        # External field - delegate to FieldsTab
         self._fields_tab.collect(d)
-        # Reaction model — delegate to ReactionsTab
+        # Reaction model - delegate to ReactionsTab
         self._reactions_tab.collect(d, is_em and self.var_reactions_enabled.get())
         project_folder = self.var_project_folder.get().strip() or os.path.dirname(self._active_config_path)
         d["PROJECT_FOLDER"] = project_folder
@@ -861,7 +867,7 @@ class SimGUI(tk.Tk):
         d["GEOMETRY_CACHE_DIR"] = self.var_cache.get()
         d["PARAVIEW_PATH"] = self.var_pv_path.get()
         d["PARAVIEW_MODULE"] = self.var_pv_module.get()
-        # Geometry / Particles / Output — delegated
+        # Geometry / Particles / Output - delegated
         self._geometry_tab.collect(d)
         self._particles_tab.collect(d)
         self._output_tab.collect(d)
@@ -877,7 +883,7 @@ class SimGUI(tk.Tk):
             self._sync_project_folder(default_to_active=True)
             self._sync_cfg_to_tabs()
             save_config(self.cfg, self._active_config_path)
-            self._log(f"✔ Configuration saved to {os.path.basename(self._active_config_path)}\n")
+            self._log(f"âœ” Configuration saved to {os.path.basename(self._active_config_path)}\n")
             self._set_status("Configuration saved")
         except Exception as e:
             messagebox.showerror("Save Error", str(e))
@@ -900,7 +906,7 @@ class SimGUI(tk.Tk):
             save_config(self.cfg, path)
             self._set_active_config_path(path)
             self._sync_project_folder(default_to_active=True)
-            self._log(f"✔ Configuration saved to {os.path.basename(path)}\n")
+            self._log(f"âœ” Configuration saved to {os.path.basename(path)}\n")
         except Exception as e:
             messagebox.showerror("Save Error", str(e))
 
@@ -917,25 +923,25 @@ class SimGUI(tk.Tk):
     def _refresh_all_from_cfg(self):
         """Push self.cfg values back into every GUI widget."""
         c = self.cfg
-        # General — tracking method
+        # General - tracking method
         raw_mode = c.get("TRACKING_MODE", "ray")
         self.var_tracking_mode.set("EM Tracing" if raw_mode == "em_track_then_bvh" else "Ray Tracing")
         rm = c.get("REACTION_MODEL", {})
         reactions_on = rm.get("type", "none") not in ("none", "off", "null")
         self.var_reactions_enabled.set(reactions_on and raw_mode == "em_track_then_bvh")
-        # General — engine
+        # General - engine
         self.var_project_folder.set(c.get("PROJECT_FOLDER", os.path.dirname(self._active_config_path)))
         self.var_cpu.set(c.get("NUM_CPU_CORES", 1))
         self.var_cache.set(c.get("GEOMETRY_CACHE_DIR", "geometry_cache"))
         self.var_pv_path.set(c.get("PARAVIEW_PATH", "paraview"))
         self.var_pv_module.set(c.get("PARAVIEW_MODULE", "ParaView"))
         self._sync_project_folder(default_to_active=True)
-        # Geometry / Particles / Output — delegated
+        # Geometry / Particles / Output - delegated
         self._geometry_tab.refresh(c)
         self._particles_tab.refresh(c)
         self._output_tab.refresh(c)
         self._results_tab.var_ENABLE_VISUALIZATION.set(c.get("ENABLE_VISUALIZATION", True))
-        # Fields — EM settings
+        # Fields - EM settings
         self.var_em_step.set(c.get("EM_STEP_LENGTH_M", 0.02))
         self.var_em_max_steps.set(c.get("EM_MAX_STEPS", 500))
         v = c.get("EM_MIN_ENERGY_EV")
@@ -945,7 +951,7 @@ class SimGUI(tk.Tk):
         self.var_bbox_min.set(f"{bbox_min[0]}, {bbox_min[1]}, {bbox_min[2]}")
         bbox_max = c.get("EM_BOUNDING_BOX_MAX_CORNER_M") or [13.0, 0.5, 0.8]
         self.var_bbox_max.set(f"{bbox_max[0]}, {bbox_max[1]}, {bbox_max[2]}")
-        # Fields — per-component (delegated)
+        # Fields - per-component (delegated)
         self._fields_tab.refresh(c)
         # Reactions (delegated)
         self._reactions_tab.refresh(c)
@@ -977,7 +983,7 @@ class _ExtractDialog(tk.Toplevel):
         self.var_input = tk.StringVar()
         ttk.Entry(self, textvariable=self.var_input, width=48).grid(
             row=0, column=1, sticky="we", padx=(0, 4), pady=4)
-        ttk.Button(self, text="Browse…",
+        ttk.Button(self, text="Browseâ€¦",
                     command=lambda: self._browse_vtp(initial_dir)).grid(
             row=0, column=2, padx=(0, 12), pady=4)
 
@@ -990,7 +996,7 @@ class _ExtractDialog(tk.Toplevel):
         self.var_output = tk.StringVar()
         ttk.Entry(self, textvariable=self.var_output, width=48).grid(
             row=1, column=1, sticky="we", padx=(0, 4), pady=4)
-        ttk.Button(self, text="Browse…",
+        ttk.Button(self, text="Browseâ€¦",
                     command=self._browse_output).grid(
             row=1, column=2, padx=(0, 12), pady=4)
 
@@ -1056,7 +1062,7 @@ class _ExtractDialog(tk.Toplevel):
         btn_frm = ttk.Frame(self)
         btn_frm.grid(row=9, column=0, columnspan=3, pady=12)
 
-        ttk.Button(btn_frm, text="💾  Save CSV",
+        ttk.Button(btn_frm, text="ðŸ’¾  Save CSV",
                     command=self._do_extract).pack(side="left", padx=4)
         ttk.Button(btn_frm, text="Cancel",
                     command=self.destroy).pack(side="left", padx=4)
@@ -1124,7 +1130,7 @@ class _ExtractDialog(tk.Toplevel):
                                     parent=self)
             return
 
-        self.var_status.set("Extracting…")
+        self.var_status.set("Extractingâ€¦")
         self.update_idletasks()
 
         def _worker():
@@ -1200,7 +1206,7 @@ class _ExtractDialog(tk.Toplevel):
                 df.to_csv(output_csv, index=False, float_format="%.6e")
 
                 self.after(0, lambda: self.var_status.set(
-                    f"✔ Saved {n_rows} rows to {os.path.basename(output_csv)}"))
+                    f"âœ” Saved {n_rows} rows to {os.path.basename(output_csv)}"))
                 self.after(0, lambda: messagebox.showinfo(
                     "Done",
                     f"Extracted {n_rows} rows to:\n{output_csv}",
@@ -1260,3 +1266,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+

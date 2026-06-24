@@ -1,4 +1,4 @@
-# generate_report.py
+﻿# generate_report.py
 """
 Standalone post-processing script to generate summary CSV reports from
 simulation result files (.vtp/.vtm), without re-running the simulation
@@ -38,7 +38,7 @@ import glob
 import argparse
 
 try:
-    import config
+    from beamontarget import config
     DEFAULT_OUTPUT_DIR = config.DETAILED_OUTPUT_DIR
 except ImportError:
     DEFAULT_OUTPUT_DIR = "OUTPUT"
@@ -271,3 +271,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+

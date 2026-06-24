@@ -3,6 +3,10 @@
 import os
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator, interp1d
+from beamontarget.paths import get_project_root
+
+
+_PROJECT_ROOT = str(get_project_root())
 
 
 class ExternalFieldProvider:
@@ -36,7 +40,7 @@ class GridFieldComponent:
     def __init__(self, filepath):
         resolved = filepath
         if not os.path.isabs(filepath):
-            resolved = os.path.join(os.path.dirname(__file__), filepath)
+            resolved = os.path.join(_PROJECT_ROOT, filepath)
         # Skip header rows that cannot be parsed as floats
         skip = 0
         with open(resolved, 'r') as fh:
@@ -101,7 +105,7 @@ class LineFieldComponent:
     def __init__(self, filepath):
         resolved = filepath
         if not os.path.isabs(filepath):
-            resolved = os.path.join(os.path.dirname(__file__), filepath)
+            resolved = os.path.join(_PROJECT_ROOT, filepath)
 
         try:
             data = np.loadtxt(resolved, dtype=np.float64, delimiter=',')

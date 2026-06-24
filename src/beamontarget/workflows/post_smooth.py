@@ -1,4 +1,4 @@
-# post_smooth.py
+﻿# post_smooth.py
 """
 Standalone post-processing script to apply smoothing to simulation results
 that have already been produced.
@@ -27,9 +27,9 @@ import os
 import glob
 import argparse
 
-import config
-import batch_smoother
-import generate_report
+from beamontarget import config
+from beamontarget.io import batch_smoother
+from beamontarget.io import generate_report
 
 
 def find_subdirs_with_results(parent_dir):
@@ -79,7 +79,7 @@ def main():
         type=float,
         default=config.SMOOTHING_MAX_CELL_AREA if config.SMOOTHING_MAX_CELL_AREA else 0,
         help=(
-            f"Only smooth cells with area below this threshold (m²).\n"
+            f"Only smooth cells with area below this threshold (mÂ²).\n"
             f"Defaults to {config.SMOOTHING_MAX_CELL_AREA}.  Set to 0 to smooth all cells with power."
         ),
     )
@@ -154,3 +154,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+

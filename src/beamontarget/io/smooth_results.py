@@ -1,4 +1,4 @@
-# smooth_results.py
+﻿# smooth_results.py
 """
 This file now acts as a "library" containing the core logic for smoothing.
 The `apply_smoothing` function can be imported by other scripts.
@@ -23,7 +23,7 @@ import time
 import glob
 import argparse
 
-import config
+from beamontarget import config
 
 
 def _build_noop_stats(mesh, deposited_power, areas, smoothed_density, radius, max_cell_area, elapsed_s, species_stats=None):
@@ -237,8 +237,8 @@ def _find_subdirs_with_results(parent_dir):
 
 def main(argv=None):
     """Smooth existing simulation outputs using a selected JSON config."""
-    import batch_smoother
-    import generate_report
+    from beamontarget.io import batch_smoother
+    from beamontarget.io import generate_report
 
     parser = argparse.ArgumentParser(description="Apply smoothing to completed simulation outputs.")
     
@@ -337,3 +337,6 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
+
+
+

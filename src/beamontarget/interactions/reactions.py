@@ -1,10 +1,14 @@
-"""Species/reaction framework for EM particle tracking."""
+﻿"""Species/reaction framework for EM particle tracking."""
 
 import os
 import numpy as np
-from constants import ELEMENTARY_CHARGE_C, HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG
-import cross_sections
+from beamontarget.constants import ELEMENTARY_CHARGE_C, HYDROGEN_MASS_KG, DEUTERIUM_MASS_KG
+from beamontarget.interactions import cross_sections
 from scipy.interpolate import interp1d
+from beamontarget.paths import get_project_root
+
+
+_PROJECT_ROOT = str(get_project_root())
 
 
 class ReactionModel:
@@ -83,7 +87,7 @@ class BeamCrossSectionReaction(ReactionModel):
             raise ValueError("density_profile_file must have .dens extension")
 
         if not os.path.isabs(path):
-            base_dir = os.path.dirname(__file__)
+            base_dir = _PROJECT_ROOT
             if os.path.dirname(path):
                 path = os.path.abspath(os.path.join(base_dir, path))
             else:
@@ -208,7 +212,7 @@ class BeamCrossSectionReaction(ReactionModel):
         density_m3 = self._density_at_positions(positions_m)
 
         if self.manual_cross_sections:
-            # Use user-supplied constant cross-sections (scalar values in m²)
+            # Use user-supplied constant cross-sections (scalar values in mÂ²)
             sigmas = self.manual_cross_sections
             rates = {}
             for k, sigma in sigmas.items():
@@ -334,3 +338,6 @@ def create_reaction_model(config_dict=None):
         )
 
     raise ValueError(f"Unknown REACTION_MODEL type: {model_type}")
+
+
+

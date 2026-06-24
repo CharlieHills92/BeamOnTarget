@@ -7,7 +7,7 @@ name = "BeamOnTarget"
 version = "1.0.0"
 description = "Neutral beam particle deposition simulation and analysis tool"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "GPL-3.0-only"}
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "numpy>=1.26",
@@ -27,35 +27,13 @@ dependencies = [
 ]
 
 [project.scripts]
-beamontarget = "sim_gui:main"
+beamontarget = "beamontarget.gui.sim_gui:main"
+beamontarget-run = "beamontarget.workflows.run_simulation:main"
 
 [tool.setuptools]
-py-modules = [
-    "sim_gui",
-    "viewer",
-    "config",
-    "engine",
-    "em_tracker_v2",
-    "field_provider",
-    "geometry",
-    "output",
-    "particles",
-    "reactions",
-    "run_simulation",
-    "smooth_results",
-    "species",
-    "trajectory_intersector",
-    "batch_smoother",
-    "extract_mesh_data",
-    "post_smooth",
-    "generate_report",
-]
+package-dir = {"" = "src"}
 
-[tool.setuptools.package-data]
-"*" = [
-    "*.json",
-    "BEAM_CONFIGS/*.bl",
-    "CAL/*.stl",
-    "NEU/*.stl",
-    "RID/*.stl",
-]
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["beamontarget*"]
+
